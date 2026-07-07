@@ -30,7 +30,7 @@
 
 <div class="container">
     <h2>Validador de Cédulas CO</h2>
-    <p style="font-size: 13px; color: #94a3b8; margin-top: -10px;">Compatibilidad Universal (Gama Alta / Media / Baja)</p>
+    <p style="font-size: 13px; color: #94a3b8; margin-top: -10px;">Forzado de Cámara Principal y Resolución Adaptativa</p>
     
     <button id="btn-start">Iniciar Escáner</button>
     <button id="btn-nueva-lectura">🔄 Nueva Lectura</button>
@@ -88,7 +88,7 @@
         }
     }
 
-    // --- PARSER AMBOS FORMATOS ---
+    // --- PARSERS DE INFORMACIÓN ---
     function parsearPDF417(text) {
         try {
             let limpia = text.replace(/[^A-Z0-9Ñ ]/gi, ' ').toUpperCase();
@@ -139,7 +139,7 @@
         } catch (e) { return null; }
     }
 
-    // --- ACCIONES DE FLUJO ---
+    // --- MANEJO DEL FLUJO ---
     function congelarYMostrar(datos) {
         scanActive = false;
         playSound('success');
@@ -161,41 +161,16 @@
         logDebug(`Validación OK para CC: ${datos.cedula}`);
     }
 
-    function arrancarEscaner() {
-        if (audioCtx.state === 'suspended') audioCtx.resume();
-        
-        btnStart.style.display = 'none';
-        btnNuevaLectura.style.display = 'none';
-        btnStop.style.display = 'block';
-        tablaInfo.style.display = 'none';
-        overlay.style.display = 'none';
-        logDebug("Inicializando cámara...");
-
-        scanActive = true;
-        html5QrcodeScanner = new Html5Qrcode("reader");
-
-        // CONFIGURACIÓN DE CONTRATOS MODIFICADA (Solución al error de llaves)
-        const config = { 
-            fps: 25, 
-            qrbox: (w, h) => { return { width: w * 0.9, height: h * 0.55 }; },
-            formatsToSupport: [ Html5QrcodeSupportedFormats.QR_CODE, Html5QrcodeSupportedFormats.PDF_417 ],
-            // Aquí es donde se colocan correctamente las directrices de resolución adaptativa
-            videoConstraints: {
-                width: { ideal: 1280 },  // Intenta HD si está disponible
-                height: { ideal: 720 }   // Si no, el navegador se adapta automáticamente hacia abajo sin romperse
-            }
-        };
-
-        // El primer parámetro ahora tiene EXACTAMENTE 1 llave, cumpliendo la regla estricta
+    function ejecutarLector(cameraId, config) {
         html5QrcodeScanner.start(
-            { facingMode: "environment" }, 
+            cameraId, 
             config,
             (decodedText, decodedResult) => {
                 if (!scanActive) return;
 
                 let datos = null;
                 const format = decodedResult.result.format.formatName;
-                logDebug(`Código ${format} en lente...`);
+                logDebug(`Código ${format} en la mira...`);
 
                 if (format === "PDF_417") datos = parsearPDF417(decodedText);
                 else if (format === "QR_CODE") datos = parsearQRDigital(decodedText);
@@ -205,15 +180,75 @@
                 } else {
                     scanActive = false;
                     playSound('error');
-                    logDebug("Fallo: El código no tiene estructura de Registraduría.");
+                    logDebug("Fallo: Código detectado sin estructura válida.");
                     alert("Lectura incompleta. Asegure buena iluminación e intente de nuevo.");
                     prepararSiguienteLectura();
                 }
             },
-            (err) => { /* Escaneo en ráfaga */ }
+            (err) => { /* Captura silenciosa */ }
         ).catch(err => {
-            logDebug(`Error de hardware: ${err}`);
-            alert("No se pudo iniciar la cámara trasera.");
+            logDebug(`Error al encender ID asignado: ${err}`);
+            // Si el ID específico falla por restricciones de hardware, aplicamos el último recurso universal
+            logDebug("Aplicando último recurso: facingMode.");
+            html5QrcodeScanner.start({ facingMode: "environment" }, config, () => {}, () => {});
+        });
+    }
+
+    function arrancarEscaner() {
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+        
+        btnStart.style.display = 'none';
+        btnNuevaLectura.style.display = 'none';
+        btnStop.style.display = 'block';
+        tablaInfo.style.display = 'none';
+        overlay.style.display = 'none';
+        logDebug("Buscando lentes traseros disponibles...");
+
+        scanActive = true;
+        html5QrcodeScanner = new Html5Qrcode("reader");
+
+        // Configuración adaptativa: Busca HD pero si el dispositivo es antiguo acepta tamaños inferiores
+        const config = { 
+            fps: 25, 
+            qrbox: (w, h) => { return { width: w * 0.9, height: h * 0.55 }; },
+            formatsToSupport: [ Html5QrcodeSupportedFormats.QR_CODE, Html5QrcodeSupportedFormats.PDF_417 ],
+            videoConstraints: {
+                width: { ideal: 1280 },  // Intenta HD para nitidez del PDF417
+                height: { ideal: 720 }   // Si no cuenta con ella, la cámara desciende de resolución sin fallar
+            }
+        };
+
+        // ENUMERACIÓN DE HARDWARE NATIVO
+        Html5Qrcode.getCameras().then(devices => {
+            if (devices && devices.length > 0) {
+                // Algoritmo de filtrado para capturar la cámara principal real:
+                // Buscamos palabras clave de la cámara trasera y descartamos lentes secundarios (como wide, macro o virtuales)
+                let camarasTraseras = devices.filter(device => {
+                    const label = device.label.toLowerCase();
+                    return (label.includes('back') || label.includes('trasera') || label.includes('rear') || label.includes('ambiente')) 
+                           && !label.includes('wide') && !label.includes('macro') && !label.includes('ultra');
+                });
+
+                // Si los filtros limpiaron los lentes secundarios, usamos el primero de la lista (que por estándar de Android/iOS es el sensor principal)
+                // Si el navegador no entrega etiquetas (labels vacíos por privacidad inicial), tomamos el último dispositivo que suele ser el trasero.
+                let camaraSeleccionadaId = devices[0].id;
+                if (camarasTraseras.length > 0) {
+                    camaraSeleccionadaId = camarasTraseras[0].id;
+                    logDebug(`Lente principal fijado: ${camarasTraseras[0].label.substring(0, 20)}...`);
+                } else {
+                    camaraSeleccionadaId = devices[devices.length - 1].id; 
+                    logDebug("Lente asignado por posición física.");
+                }
+
+                ejecutarLector(camaraSeleccionadaId, config);
+
+            } else {
+                logDebug("No se listaron cámaras. Usando modo estándar.");
+                ejecutarLector({ facingMode: "environment" }, config);
+            }
+        }).catch(err => {
+            logDebug(`Error analizando hardware: ${err}`);
+            ejecutarLector({ facingMode: "environment" }, config);
         });
     }
 
