@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Validador de Cédulas CO - Live Switch</title>
+    <title>Validador de Cédulas CO - Selector Real</title>
     <script src="https://unpkg.com/html5-qrcode"></script>
     <style>
         body { font-family: 'Segoe UI', Arial, sans-serif; text-align: center; margin: 0; padding: 15px; background-color: #0f172a; color: #f8fafc; }
@@ -35,7 +35,7 @@
 
 <div class="container">
     <h2>Validador de Cédulas CO</h2>
-    <p style="font-size: 13px; color: #94a3b8; margin-top: -10px;">Cambio de lente en tiempo real con resolución adaptativa</p>
+    <p style="font-size: 13px; color: #94a3b8; margin-top: -10px;">Conmutación de hardware forzada y efectiva</p>
     
     <div class="select-wrapper">
         <label for="video-source">Seleccionar Cámara:</label>
@@ -60,7 +60,7 @@
         <tr><th>Género</th><td id="res-genero">-</td></tr>
     </table>
 
-    <div id="debug-box">Consola: Esperando interacción...</div>
+    <div id="debug-box">Consola: Listo.</div>
 </div>
 
 <script>
@@ -99,7 +99,7 @@
         }
     }
 
-    // --- CARGA DE HARDWARE ---
+    // --- CARGA Y FILTRADO DE HARDWARE ---
     function cargarCamarasDisponibles() {
         Html5Qrcode.getCameras().then(devices => {
             if (devices && devices.length > 0) {
@@ -112,7 +112,7 @@
                     option.text = device.label || `Lente alternativo ${index + 1}`;
                     cameraSelect.appendChild(option);
 
-                    // Preselección inteligente del lente trasero principal
+                    // Forzar preselección de la cámara trasera principal de la lista
                     const labelLow = option.text.toLowerCase();
                     if ((labelLow.includes('back') || labelLow.includes('trasera') || labelLow.includes('rear')) 
                         && !labelLow.includes('wide') && !labelLow.includes('macro') && !labelLow.includes('ultra')) {
@@ -120,36 +120,44 @@
                     }
                 });
 
+                // Si fallan las etiquetas de texto, elegimos el último dispositivo (normalmente el trasero)
                 if (indiceSeleccionado === 0 && devices.length > 1) {
                     indiceSeleccionado = devices.length - 1; 
                 }
 
                 cameraSelect.selectedIndex = indiceSeleccionado;
-                logDebug(`Cámaras listas. Sugerida: ${cameraSelect.options[indiceSeleccionado].text}`);
+                logDebug(`Lentes cargados. Sugerido por defecto: ${cameraSelect.options[indiceSeleccionado].text}`);
             } else {
                 cameraSelect.innerHTML = "<option value=''>No se detectaron cámaras</option>";
             }
         }).catch(err => {
-            logDebug("Falta permiso de cámara. Presione iniciar para solicitarlo.");
-            cameraSelect.innerHTML = "<option value=''>Permiso pendiente...</option>";
+            logDebug("Otorgue permisos de cámara para listar los lentes.");
+            cameraSelect.innerHTML = "<option value=''>Permiso requerido...</option>";
         });
     }
 
     window.addEventListener('DOMContentLoaded', cargarCamarasDisponibles);
 
-    // --- EVENTO DE CAMBIO EN CALIENTE (HOT-SWAP) ---
+    // --- INTERCAMBIO DE CÁMARAS EN CALIENTE (HOT-SWAP DEFINITIVO) ---
     cameraSelect.addEventListener('change', () => {
-        // Si el usuario cambia de cámara mientras el escáner está encendido, reiniciamos el flujo automáticamente
-        if (scanActive && html5QrcodeScanner) {
-            logDebug("Intercambiando lente en tiempo real...");
+        if (html5QrcodeScanner) {
+            logDebug("Apagando lente anterior y esperando liberación física...");
+            scanActive = false;
+            
+            // 1. Apagamos de forma segura la transmisión actual
             html5QrcodeScanner.stop().then(() => {
-                ejecutarFlujoEscaneo();
+                // 2. RETRASO DE COHESIÓN: Esperamos 400ms a que el sistema operativo apague el lente anterior
+                setTimeout(() => {
+                    ejecutarFlujoEscaneo();
+                }, 400);
             }).catch(err => {
-                logDebug(`Error al apagar para cambio: ${err}`);
-                ejecutarFlujoEscaneo();
+                // Si ya estaba apagada o falla, forzamos de igual manera el reinicio con delay
+                setTimeout(() => {
+                    ejecutarFlujoEscaneo();
+                }, 400);
             });
-        } else {
-            logDebug(`Lente preparado: ${cameraSelect.options[cameraSelect.selectedIndex].text}`);
+        } else if (btnStart.style.display === 'none') {
+            ejecutarFlujoEscaneo();
         }
     });
 
@@ -189,33 +197,40 @@
             if (!cedula || !bloqueNombres) return null;
             return {
                 tipo: "Digital (QR)", cedula: cedula,
-                apellidos: bloqueNombres[1].replace(/</g, ' ').trim(),
+                apellidos: friendship = bloqueNombres[1].replace(/</g, ' ').trim(),
                 nombres: bloqueNombres[2].replace(/</g, ' ').trim(),
                 genero: limpia.includes("M") ? "Masculino" : "Femenino"
             };
         } catch (e) { return null; }
     }
 
-    // --- MOTOR DE ESCANEO ---
+    // --- MOTOR DE CONTROL DE VIDEO ---
     function ejecutarFlujoEscaneo() {
         scanActive = true;
         
-        // Evitamos duplicar la instancia interna de la librería
-        if (!html5QrcodeScanner) {
-            html5QrcodeScanner = new Html5Qrcode("reader");
-        }
+        // 3. LIMPIEZA ABSOLUTA: Destruimos el contenedor visual para romper la caché de video del navegador
+        const readerContainer = document.getElementById('reader');
+        readerContainer.innerHTML = ""; 
+        
+        // 4. INSTANCIA FRESCA: Forzamos un objeto limpio sin rastro de configuraciones previas
+        html5QrcodeScanner = new Html5Qrcode("reader");
 
+        const camaraSeleccionadaId = cameraSelect.value;
+        
         const config = { 
             fps: 25, 
             qrbox: (w, h) => { return { width: w * 0.9, height: h * 0.55 }; },
             formatsToSupport: [ Html5QrcodeSupportedFormats.QR_CODE, Html5QrcodeSupportedFormats.PDF_417 ],
-            videoConstraints: { width: { ideal: 1280 }, height: { ideal: 720 } }
+            videoConstraints: { 
+                width: { ideal: 1280 }, 
+                height: { ideal: 720 } 
+            }
         };
 
-        const camaraSeleccionadaId = cameraSelect.value;
+        // Si el selector tiene un ID de hardware válido, lo usamos como string puro
         const targetCamara = camaraSeleccionadaId ? camaraSeleccionadaId : { facingMode: "environment" };
-
-        logDebug(`Iniciando: ${cameraSelect.options[cameraSelect.selectedIndex]?.text || "Por defecto"}`);
+        
+        logDebug(`Encendiendo: ${cameraSelect.options[cameraSelect.selectedIndex]?.text || "Por defecto"}`);
 
         html5QrcodeScanner.start(
             targetCamara, 
@@ -245,17 +260,17 @@
                     overlay.style.display = 'flex';
                     btnNuevaLectura.style.display = 'block';
                     btnStop.style.display = 'none';
-                    logDebug(`Lectura Exitosa: CC ${datos.cedula}`);
+                    logDebug(`Cédula procesada: ${datos.cedula}`);
                 } else {
                     scanActive = false;
                     playSound('error');
-                    alert("Estructura de código no reconocida. Intente enfocar de nuevo.");
+                    alert("Código detectado pero los campos no corresponden a una cédula.");
                     prepararSiguienteLectura();
                 }
             },
-            (err) => { /* Loop ráfaga */ }
+            (err) => { /* Escaneo pasivo */ }
         ).catch(err => {
-            logDebug(`Fallo de inicio: ${err}`);
+            logDebug(`Fallo al inicializar lente: ${err}`);
         });
     }
 
@@ -268,11 +283,11 @@
         tablaInfo.style.display = 'none';
         overlay.style.display = 'none';
 
-        // Si las etiquetas estaban vacías (por bloqueo de privacidad inicial), las refrescamos al dar clic
-        if (cameraSelect.value === "") {
+        // Si se inicia por primera vez y las etiquetas estaban bloqueadas, las recargamos con el permiso ya concedido
+        if (cameraSelect.value === "" || cameraSelect.innerHTML.includes("Cargando")) {
             Html5Qrcode.getCameras().then(() => {
                 cargarCamarasDisponibles();
-                setTimeout(ejecutarFlujoEscaneo, 300);
+                setTimeout(ejecutarFlujoEscaneo, 350);
             }).catch(() => ejecutarFlujoEscaneo());
         } else {
             ejecutarFlujoEscaneo();
@@ -282,7 +297,7 @@
     function prepararSiguienteLectura() {
         if (html5QrcodeScanner) {
             html5QrcodeScanner.stop().then(() => {
-                arrancarEscaner();
+                setTimeout(arrancarEscaner, 200);
             }).catch(() => arrancarEscaner());
         } else {
             arrancarEscaner();
