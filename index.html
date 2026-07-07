@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Validador de Cédulas CO - Edición Cédula Amarilla</title>
+    <title>Validador de Cédulas CO - Operativo Total</title>
     <script src="https://unpkg.com/html5-qrcode"></script>
     <style>
         body { font-family: 'Segoe UI', Arial, sans-serif; text-align: center; margin: 0; padding: 15px; background-color: #0f172a; color: #f8fafc; }
@@ -13,11 +13,14 @@
         #reader-wrapper { width: 100%; }
         #reader { width: 100%; }
         
-        /* Línea Láser Optimizada */
-        .laser-line { position: absolute; top: 50%; left: 5%; width: 90%; height: 3px; background-color: #ef4444; box-shadow: 0 0 12px #ef4444; z-index: 10; transform: translateY(-50%); pointer-events: none; animation: escaneo 2s infinite ease-in-out; }
-        @keyframes escaneo { 0%, 100% { top: 30%; } 50% { top: 70%; } }
+        /* Forzar que el video nativo use todo el contenedor sin deformarse */
+        #reader video { object-fit: cover !important; width: 100% !important; height: 100% !important; }
+        
+        /* Haz láser de escaneo dinámico */
+        .laser-line { position: absolute; top: 50%; left: 5%; width: 90%; height: 3px; background-color: #ef4444; box-shadow: 0 0 12px #ef4444; z-index: 10; transform: translateY(-50%); pointer-events: none; animation: escaneoRápido 2s infinite ease-in-out; }
+        @keyframes escaneoRápido { 0%, 100% { top: 25%; opacity: 0.6; } 50% { top: 75%; opacity: 1; } }
 
-        .congelado-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(16, 185, 129, 0.3); display: none; justify-content: center; align-items: center; font-weight: bold; font-size: 20px; color: #10b981; text-shadow: 0 2px 4px rgba(0,0,0,0.8); pointer-events: none; z-index: 11; }
+        .congelado-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(16, 185, 129, 0.35); display: none; justify-content: center; align-items: center; font-weight: bold; font-size: 20px; color: #10b981; text-shadow: 0 2px 4px rgba(0,0,0,0.8); pointer-events: none; z-index: 11; }
         
         button { background-color: #10b981; color: white; border: none; padding: 14px; font-size: 16px; border-radius: 8px; cursor: pointer; width: 100%; font-weight: bold; margin-bottom: 10px; display: none; }
         button:hover { background-color: #059669; }
@@ -39,10 +42,10 @@
 
 <div class="container">
     <h2>Validador de Cédulas CO</h2>
-    <p id="txt-status" style="font-size: 13px; color: #eab308; margin-top: -10px; font-weight: bold;">Configurando lentes de alta definición...</p>
+    <p id="txt-status" style="font-size: 13px; color: #3b82f6; margin-top: -10px; font-weight: bold;">Cargando flujo de video...</p>
     
     <div class="select-wrapper">
-        <label for="video-source">Lente activo:</label>
+        <label for="video-source">Lente de Hardware:</label>
         <select id="video-source">
             <option value="environment" selected>📸 Cámara Trasera Principal</option>
             <option value="user">🤳 Cámara Frontal (Selfie)</option>
@@ -56,7 +59,7 @@
         <div id="reader-wrapper">
             <div id="reader"></div>
         </div>
-        <div id="overlay" class="congelado-overlay">✓ CÉDULA LEÍDA</div>
+        <div id="overlay" class="congelado-overlay">✓ LECTURA CORRECTA</div>
     </div>
 
     <table id="tabla-info" class="tabla-datos">
@@ -67,7 +70,7 @@
         <tr><th>Género</th><td id="res-genero">-</td></tr>
     </table>
 
-    <div id="debug-box">Consola: Esperando cámara...</div>
+    <div id="debug-box">Consola: Inicializando...</div>
 </div>
 
 <script>
@@ -107,6 +110,7 @@
         }
     }
 
+    // PURGA ABSOLUTA DEL NODO (Mantiene el intercambio libre de bloqueos)
     function recrearNodoLector() {
         readerWrapper.innerHTML = '<div id="reader"></div>';
     }
@@ -126,7 +130,7 @@
                     if (!device.label.toLowerCase().includes('front') && !device.label.toLowerCase().includes('selfie')) {
                         const option = document.createElement('option');
                         option.value = device.id;
-                        option.text = device.label || `Lente Trasero Pro`;
+                        option.text = device.label || `Lente Trasero Alterno`;
                         cameraSelect.appendChild(option);
                     }
                 });
@@ -141,8 +145,10 @@
         }).catch(() => {});
     }
 
+    // CONMUTADOR CONTINUO ANTI-BLOQUEOS PRESERVADO
     cameraSelect.addEventListener('change', () => {
         if (html5QrcodeScanner) {
+            logDebug("Cambiando lente activo de forma segura...");
             scanActive = false;
             html5QrcodeScanner.stop().then(() => {
                 html5QrcodeScanner = null;
@@ -151,49 +157,45 @@
                 html5QrcodeScanner = null;
                 setTimeout(ejecutarFlujoEscaneo, 250);
             });
+        } else {
+            ejecutarFlujoEscaneo();
         }
     });
 
-    // --- PARSER MEJORADO ADAPTATIVO PARA CÉDULA AMARILLA ---
+    // --- PARSER MEJORADO PARA ALTA DENSIDAD (CÉDULA AMARILLA) ---
     function parsearPDF417(text) {
         try {
-            // Reemplazo masivo de caracteres extraños de la cédula antigua
             let limpia = text.replace(/[^A-Z0-9Ñ ]/gi, ' ').toUpperCase();
-            
-            // Buscar bloques numéricos grandes (las cédulas colombianas van de 5 a 10 dígitos)
             let bloquesNumeros = limpia.match(/\d{5,11}/g);
             if (!bloquesNumeros) return null;
             
-            // En la cédula amarilla, a veces el primer bloque largo es un serial interno del documento.
-            // Validamos que el bloque seleccionado sea un número de documento coherente.
-            let cedulaRaw = bloquesNumeros[0];
-            if (cedulaRaw.length > 10 && bloquesNumeros[1]) {
-                cedulaRaw = bloquesNumeros[1]; // Fallback al segundo bloque si el primero es un serial de tarjeta larguísimo
+            // Discriminador de número de documento legítimo frente a seriales impresos
+            let cedula = "";
+            for (let num of bloquesNumeros) {
+                if (num.length >= 6 && num.length <= 10) {
+                    cedula = parseInt(num, 10).toString();
+                    break;
+                }
             }
+            if (!cedula) cedula = parseInt(bloquesNumeros[0], 10).toString();
             
-            let cedula = parseInt(cedulaRaw, 10).toString();
-            let posCedula = limpia.indexOf(cedulaRaw);
-            let subcadenaTexto = limpia.substring(posCedula + cedulaRaw.length);
-            let palabras = subcadenaTexto.match(/[A-ZÑ]{2,}/g) || [];
+            let posCedula = limpia.indexOf(cedula);
+            let subcadenaTexto = limpia.substring(posCedula + cedula.length);
+            let palabras = subcadenaTexto.match(/[A-ZÑ]{3,}/g) || limpia.match(/[A-ZÑ]{3,}/g) || [];
             
-            // Si el formateo estricto falla debido a la suciedad del código binario antiguo,
-            // usamos un método de extracción por fuerza bruta para rescatar la lectura.
-            if (!palabras[0] || palabras.length < 2) {
-                let todasLasPalabras = limpia.match(/[A-ZÑ]{3,}/g) || [];
-                return {
-                    tipo: "Cédula Amarilla / Digital",
-                    cedula: cedula,
-                    apellidos: todasLasPalabras[0] || "No detectado",
-                    nombres: todasLasPalabras[1] || "No detectado",
-                    genero: text.includes("M") ? "Masculino" : "Femenino"
-                };
+            let apellidos = `${palabras[0] || ""} ${palabras[1] || ""}`.trim();
+            let nombres = `${palabras[2] || palabras[1] || "Ciudadano"} ${palabras[3] || ""}`.trim();
+
+            if (!palabras[0]) {
+                apellidos = "No extraído (Código Difuso)";
+                nombres = "No extraído (Código Difuso)";
             }
 
             return {
-                tipo: "Cédula Amarilla / Digital", 
+                tipo: "Cédula Amarilla / Digital",
                 cedula: cedula,
-                apellidos: `${palabras[0]} ${palabras[1] || ""}`.trim(),
-                nombres: `${palabras[2] || palabras[1] || "S/N"} ${palabras[3] || ""}`.trim(),
+                apellidos: apellidos,
+                nombres: nombres,
                 genero: text.includes("M") ? "Masculino" : text.includes("F") ? "Femenino" : "No detectado"
             };
         } catch (e) { 
@@ -220,91 +222,98 @@
         } catch (e) { return null; }
     }
 
-    // --- MOTOR DE ESCANEO ULTRA-ALTA DEFINICIÓN ---
+    // --- MOTOR DE ESCANEO CON ARRANQUE GARANTIZADO (FALLBACK) ---
     function ejecutarFlujoEscaneo() {
         scanActive = true;
         recrearNodoLector();
         laser.style.display = "block";
         
         html5QrcodeScanner = new Html5Qrcode("reader");
-
         const selectedValue = cameraSelect.value;
-        let configCamara;
 
-        // MEJORA CRUCIAL 1: Solicitamos resoluciones ideales Full HD (1080p) o HD (720p).
-        // Esto fuerza al sensor trasero a enfocar con máxima nitidez sin romper el conmutador de lentes.
+        // PARÁMETROS DE ARRANQUE 1: Configuración de ultra nitidez (Ideal)
+        let configCamaraHD;
         if (selectedValue === "environment") {
-            configCamara = { facingMode: "environment", width: { ideal: 1920 }, height: { ideal: 1080 } };
+            configCamaraHD = { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } };
         } else if (selectedValue === "user") {
-            configCamara = { facingMode: "user" };
+            configCamaraHD = { facingMode: "user" };
         } else {
-            configCamara = { deviceId: selectedValue, width: { ideal: 1920 }, height: { ideal: 1080 } };
+            configCamaraHD = { deviceId: selectedValue, width: { ideal: 1280 }, height: { ideal: 720 } };
         }
 
-        // MEJORA CRUCIAL 2: Caja de visualización ampliada (Ancho: 90%, Alto: 55%)
-        // Permite que el usuario aleje un poco más la cédula para que la cámara enfoque correctamente,
-        // sin recortar el código PDF417 por arriba o abajo.
+        // OPTIMIZACIÓN DEL ÁREA DE LECTURA PARA CÉDULAS
+        // Dimensiones balanceadas (Ancho: 92%, Alto: 48%) que evitan distorsión y procesan rápido el PDF417
         const configVisual = { 
             fps: 30, 
-            qrbox: (w, h) => { return { width: w * 0.90, height: h * 0.55 }; }, 
+            qrbox: (w, h) => { return { width: w * 0.92, height: h * 0.48 }; }, 
             formatsToSupport: [ Html5QrcodeSupportedFormats.QR_CODE, Html5QrcodeSupportedFormats.PDF_417 ]
         };
 
-        txtStatus.innerText = "Modo Alta Nitidez Activo • Enfoque el código de barras";
+        txtStatus.innerText = "Sincronizando cámara...";
         txtStatus.style.color = "#eab308";
 
-        html5QrcodeScanner.start(
-            configCamara, 
-            configVisual,
-            (decodedText, decodedResult) => {
-                if (!scanActive) return;
+        // Callback unificado de éxito en decodificación
+        const alDetectarCodigo = (decodedText, decodedResult) => {
+            if (!scanActive) return;
 
-                let datos = null;
-                const format = decodedResult.result.format.formatName;
+            let datos = null;
+            const format = decodedResult.result.format.formatName;
 
-                if (format === "PDF_417") datos = parsearPDF417(decodedText);
-                else if (format === "QR_CODE") datos = parsearQRDigital(decodedText);
+            if (format === "PDF_417") datos = parsearPDF417(decodedText);
+            else if (format === "QR_CODE") datos = parsearQRDigital(decodedText);
 
-                // MEJORA CRUCIAL 3: Congelamiento inmediato y visualización forzada
-                if (datos) {
-                    scanActive = false;
-                    playSound('success');
-                    
-                    // Detiene inmediatamente los fotogramas de video en pantalla para congelar el hardware
-                    const videoEl = document.querySelector('#reader video');
-                    if (videoEl) {
-                        videoEl.pause();
-                        videoEl.style.filter = "contrast(1.2)"; // Efecto visual estático limpio
-                    }
-
-                    laser.style.display = "none";
-                    document.getElementById('res-tipo').innerText = datos.tipo;
-                    document.getElementById('res-cedula').innerText = datos.cedula;
-                    document.getElementById('res-apellidos').innerText = datos.apellidos;
-                    document.getElementById('res-nombres').innerText = datos.nombres;
-                    document.getElementById('res-genero').innerText = datos.genero;
-                    
-                    tablaInfo.style.display = 'table';
-                    overlay.style.display = 'flex';
-                    btnNuevaLectura.style.display = 'block';
-                    
-                    txtStatus.innerText = "✓ Lectura efectuada con éxito";
-                    txtStatus.style.color = "#10b981";
-                    logDebug(`Procesado exitoso.`);
-                } else {
-                    // Si el hardware detectó el PDF417 pero los datos están demasiado corruptos/borrosos,
-                    // no bloqueamos la interfaz, dejamos que siga intentando de forma fluida.
-                    logDebug("Código detectado. Ajustando enfoque...");
+            if (datos) {
+                scanActive = false;
+                playSound('success');
+                
+                // CONGELAMIENTO INMEDIATO DE HARDWARE DE VIDEO
+                const videoEl = document.querySelector('#reader video');
+                if (videoEl) {
+                    videoEl.pause(); 
+                    videoEl.style.filter = "contrast(1.15) brightness(1.05)";
                 }
-            },
-            () => {} // Flujo pasivo continuo
-        ).then(() => {
-            logDebug("Cámara HD lista.");
+
+                laser.style.display = "none";
+                document.getElementById('res-tipo').innerText = datos.tipo;
+                document.getElementById('res-cedula').innerText = datos.cedula;
+                document.getElementById('res-apellidos').innerText = datos.apellidos;
+                document.getElementById('res-nombres').innerText = datos.nombres;
+                document.getElementById('res-genero').innerText = datos.genero;
+                
+                tablaInfo.style.display = 'table';
+                overlay.style.display = 'flex';
+                btnNuevaLectura.style.display = 'block';
+                
+                txtStatus.innerText = "✓ Cédula leída con éxito";
+                txtStatus.style.color = "#10b981";
+            }
+        };
+
+        // INTENTO DE ARRANQUE EN CADENA (Garantiza ejecución sin importar el dispositivo)
+        html5QrcodeScanner.start(configCamaraHD, configVisual, alDetectarCodigo, () => {})
+        .then(() => {
+            txtStatus.innerText = "Escáner Activo • Ubique el código de barras";
+            txtStatus.style.color = "#10b981";
+            logDebug("Lente principal en alta definición.");
             setTimeout(enumerarHardware, 350);
-        }).catch(err => {
-            logDebug("Esperando interacción de hardware...");
-            txtStatus.innerText = "⚠️ Toque la pantalla para forzar enfoque HD";
-            txtStatus.style.color = "#f59e0b";
+        })
+        .catch(err => {
+            logDebug("Lente HD restringido. Lanzando modo de compatibilidad...");
+            
+            // FALLBACK AUTOMÁTICO INSTANTÁNEO: Si la resolución falla, arranca el lente básico sin trabar la web
+            let configCamaraSegura = (selectedValue === "user") ? { facingMode: "user" } : { facingMode: "environment" };
+            
+            html5QrcodeScanner.start(configCamaraSegura, configVisual, alDetectarCodigo, () => {})
+            .then(() => {
+                txtStatus.innerText = "Escáner Activo (Modo Adaptativo)";
+                txtStatus.style.color = "#10b981";
+                setTimeout(enumerarHardware, 350);
+            })
+            .catch(err2 => {
+                txtStatus.innerText = "⚠️ Permiso de cámara denegado.";
+                txtStatus.style.color = "#ef4444";
+                logDebug("Error total de acceso óptico.");
+            });
         });
     }
 
@@ -330,20 +339,22 @@
         }
     }
 
+    // Inicialización automática al cargar
     window.addEventListener('DOMContentLoaded', () => {
         cameraSelect.value = "environment";
-        setTimeout(arrancarEscaner, 400);
+        setTimeout(arrancarEscaner, 300);
 
-        const activarPorToqueGlobal = () => {
+        // Activador de respaldo si las restricciones de gestos del navegador bloquean el auto-arranque
+        const disparadorGestos = () => {
             if (!scanActive && !inicializadoPorToque) {
                 inicializadoPorToque = true;
                 arrancarEscaner();
-                document.removeEventListener('click', activarPorToqueGlobal);
-                document.removeEventListener('touchstart', activarPorToqueGlobal);
+                document.removeEventListener('click', disparadorGestos);
+                document.removeEventListener('touchstart', disparadorGestos);
             }
         };
-        document.addEventListener('click', activarPorToqueGlobal);
-        document.addEventListener('touchstart', activarPorToqueGlobal);
+        document.addEventListener('click', disparadorGestos);
+        document.addEventListener('touchstart', disparadorGestos);
     });
 
     btnNuevaLectura.addEventListener('click', prepararSiguienteLectura);
