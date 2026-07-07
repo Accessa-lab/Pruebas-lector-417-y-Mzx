@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Validador de Cédulas CO - Hardcore Fix</title>
+    <title>Validador Universal de Cédulas CO</title>
     <script src="https://unpkg.com/html5-qrcode"></script>
     <style>
         body { font-family: 'Segoe UI', Arial, sans-serif; text-align: center; margin: 0; padding: 15px; background-color: #0f172a; color: #f8fafc; }
@@ -23,7 +23,6 @@
         .tabla-datos td { color: #f1f5f9; font-weight: 500; font-size: 15px; }
         .badge-tipo { display: inline-block; padding: 3px 8px; border-radius: 4px; font-size: 11px; font-weight: bold; background: #3b82f6; }
         
-        /* Consola de diagnóstico */
         #debug-box { margin-top: 15px; background: #000; color: #00ff00; font-family: monospace; font-size: 11px; padding: 10px; text-align: left; border-radius: 6px; max-height: 80px; overflow-y: auto; border: 1px solid #334155; }
     </style>
 </head>
@@ -31,7 +30,7 @@
 
 <div class="container">
     <h2>Validador de Cédulas CO</h2>
-    <p style="font-size: 13px; color: #94a3b8; margin-top: -10px;">Optimizado para lectura pesada PDF417 y QR Digital</p>
+    <p style="font-size: 13px; color: #94a3b8; margin-top: -10px;">Compatibilidad Universal (Gama Alta / Media / Baja)</p>
     
     <button id="btn-start">Iniciar Escáner</button>
     <button id="btn-nueva-lectura">🔄 Nueva Lectura</button>
@@ -51,7 +50,7 @@
         <tr><th>Género</th><td id="res-genero">-</td></tr>
     </table>
 
-    <div id="debug-box">Consola de diagnóstico: Esperando inicio...</div>
+    <div id="debug-box">Consola de diagnóstico: Listo.</div>
 </div>
 
 <script>
@@ -89,36 +88,25 @@
         }
     }
 
-    // --- PARSER ALTA RESILIENCIA PARA PDF417 TRADICIONAL ---
+    // --- PARSER AMBOS FORMATOS ---
     function parsearPDF417(text) {
         try {
-            // 1. Limpieza radical: Reemplazamos cualquier carácter no alfanumérico o control por espacios limpios
             let limpia = text.replace(/[^A-Z0-9Ñ ]/gi, ' ').toUpperCase();
-            
-            // 2. Extraemos todos los bloques numéricos puros de la cadena
             let bloquesNumeros = limpia.match(/\d{5,12}/g);
             if (!bloquesNumeros) return null;
             
-            // El primer bloque largo de números en la cédula amarilla es el documento
             let cedulaRaw = bloquesNumeros[0];
-            // Quitamos ceros a la izquierda sobrantes del formato binario (ej: 001023456 -> 1023456)
             let cedula = parseInt(cedulaRaw, 10).toString();
 
-            // 3. Aislamos el texto que viene inmediatamente DESPUÉS del número de cédula
             let posCedula = limpia.indexOf(cedulaRaw);
             let subcadenaTexto = limpia.substring(posCedula + cedulaRaw.length);
-            
-            // 4. Extraemos palabras individuales (Tokens alfabéticos de más de 2 letras)
             let palabras = subcadenaTexto.match(/[A-ZÑ]{2,}/g) || [];
             
-            // Estructura posicional estándar de la Registraduría en texto plano extraído:
-            // palabras[0] = Primer Apellido, palabras[1] = Segundo Apellido, palabras[2] = Primer Nombre...
             let apellido1 = palabras[0] || "";
             let apellido2 = palabras[1] || "";
             let nombre1 = palabras[2] || "";
             let nombre2 = palabras[3] || "";
 
-            // Si no logramos extraer al menos un nombre y apellido, el parseo falló
             if (!apellido1 || !nombre1) return null;
 
             return {
@@ -128,12 +116,9 @@
                 nombres: `${nombre1} ${nombre2}`.trim(),
                 genero: text.includes("M") ? "Masculino" : text.includes("F") ? "Femenino" : "No detectado"
             };
-        } catch (e) {
-            return null;
-        }
+        } catch (e) { return null; }
     }
 
-    // --- PARSER QR DIGITAL ---
     function parsearQRDigital(text) {
         if (!text.includes("<<")) return null;
         try {
@@ -154,12 +139,11 @@
         } catch (e) { return null; }
     }
 
-    // --- FLUJO OPERATIVO ---
+    // --- ACCIONES DE FLUJO ---
     function congelarYMostrar(datos) {
         scanActive = false;
         playSound('success');
 
-        // Congelar fotograma pausando el stream de video directo en la pantalla
         const videoEl = document.querySelector('#reader video');
         if (videoEl) videoEl.pause();
 
@@ -174,7 +158,7 @@
 
         btnNuevaLectura.style.display = 'block';
         btnStop.style.display = 'none';
-        logDebug(`Validación lista para CC: ${datos.cedula}`);
+        logDebug(`Validación OK para CC: ${datos.cedula}`);
     }
 
     function arrancarEscaner() {
@@ -185,36 +169,33 @@
         btnStop.style.display = 'block';
         tablaInfo.style.display = 'none';
         overlay.style.display = 'none';
-        logDebug("Iniciando cámara en Full HD (1080p)...");
+        logDebug("Inicializando cámara...");
 
         scanActive = true;
         html5QrcodeScanner = new Html5Qrcode("reader");
 
+        // CONFIGURACIÓN DE CONTRATOS MODIFICADA (Solución al error de llaves)
         const config = { 
-            fps: 30, // Máxima velocidad de muestreo por segundo
+            fps: 25, 
             qrbox: (w, h) => { return { width: w * 0.9, height: h * 0.55 }; },
             formatsToSupport: [ Html5QrcodeSupportedFormats.QR_CODE, Html5QrcodeSupportedFormats.PDF_417 ],
-            experimentalFeatures: {
-                useBarCodeDetectorIfSupported: true // Activa aceleración por hardware nativa en Android/Chrome
+            // Aquí es donde se colocan correctamente las directrices de resolución adaptativa
+            videoConstraints: {
+                width: { ideal: 1280 },  // Intenta HD si está disponible
+                height: { ideal: 720 }   // Si no, el navegador se adapta automáticamente hacia abajo sin romperse
             }
         };
 
-        // LIMITACIONES DE VIDEO INYECTADAS DIRECTAMENTE AL HARDWARE
-        const videoConstraints = {
-            facingMode: "environment",
-            width: { ideal: 1920, min: 1280 },  // Forzamos al sensor a trabajar en alta definición
-            height: { ideal: 1080, min: 720 }
-        };
-
+        // El primer parámetro ahora tiene EXACTAMENTE 1 llave, cumpliendo la regla estricta
         html5QrcodeScanner.start(
-            videoConstraints,
+            { facingMode: "environment" }, 
             config,
             (decodedText, decodedResult) => {
                 if (!scanActive) return;
 
                 let datos = null;
                 const format = decodedResult.result.format.formatName;
-                logDebug(`¡Código ${format} detectado! Procesando...`);
+                logDebug(`Código ${format} en lente...`);
 
                 if (format === "PDF_417") datos = parsearPDF417(decodedText);
                 else if (format === "QR_CODE") datos = parsearQRDigital(decodedText);
@@ -224,19 +205,19 @@
                 } else {
                     scanActive = false;
                     playSound('error');
-                    logDebug("ERROR: Código detectado pero estructura ilegible.");
-                    alert("Estructura de datos inválida o corrupta. Reintente.");
+                    logDebug("Fallo: El código no tiene estructura de Registraduría.");
+                    alert("Lectura incompleta. Asegure buena iluminación e intente de nuevo.");
                     prepararSiguienteLectura();
                 }
             },
-            (err) => { /* Escaneo silencioso en ráfaga */ }
+            (err) => { /* Escaneo en ráfaga */ }
         ).catch(err => {
-            logDebug(`Error crítico: ${err}`);
-            alert("No se pudo iniciar la cámara en alta resolución.");
+            logDebug(`Error de hardware: ${err}`);
+            alert("No se pudo iniciar la cámara trasera.");
         });
     }
 
-    function prepararSiguienteLectura() {
+    function SkinnerFix() {
         if (html5QrcodeScanner) {
             html5QrcodeScanner.stop().then(() => {
                 arrancarEscaner();
@@ -249,7 +230,7 @@
     }
 
     btnStart.addEventListener('click', arrancarEscaner);
-    btnNuevaLectura.addEventListener('click', prepararSiguienteLectura);
+    btnNuevaLectura.addEventListener('click', SkinnerFix);
     
     btnStop.addEventListener('click', () => {
         if (html5QrcodeScanner) {
