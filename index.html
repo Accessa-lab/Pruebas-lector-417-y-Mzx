@@ -3,62 +3,65 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Validador de Cédulas CO - Ciclo Infinito</title>
+    <title>Validador de Cédulas CO - Auto-Operativo</title>
     <script src="https://unpkg.com/html5-qrcode"></script>
     <style>
         body { font-family: 'Segoe UI', Arial, sans-serif; text-align: center; margin: 0; padding: 15px; background-color: #0f172a; color: #f8fafc; }
         .container { max-width: 500px; margin: 0 auto; background: #1e293b; padding: 20px; border-radius: 16px; box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3); }
-        #reader-container { position: relative; width: 100%; border-radius: 12px; overflow: hidden; background: #000; border: 2px solid #3b82f6; margin-top: 10px; }
         
-        /* Contenedor dinámico que limpiaremos por código */
+        /* Contenedor del escáner */
+        #reader-container { position: relative; width: 100%; border-radius: 12px; overflow: hidden; background: #000; border: 2px solid #3b82f6; margin-top: 10px; }
         #reader-wrapper { width: 100%; }
         #reader { width: 100%; }
         
-        .congelado-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(26, 188, 156, 0.25); display: none; justify-content: center; align-items: center; font-weight: bold; font-size: 20px; color: #2ecc71; text-shadow: 0 2px 4px rgba(0,0,0,0.8); pointer-events: none; }
+        /* Línea Láser de Guía para el código de barras */
+        .laser-line { position: absolute; top: 50%; left: 5%; width: 90%; height: 2px; background-color: #ef4444; box-shadow: 0 0 8px #ef4444; z-index: 10; transform: translateY(-50%); pointer-events: none; animation: parpadeo 1.5s infinite; }
+        @keyframes parpadeo { 0%, 100% { opacity: 0.4; } 50% { opacity: 1; } }
+
+        /* Capas de estado overlay */
+        .congelado-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(16, 185, 129, 0.3); display: none; justify-content: center; align-items: center; font-weight: bold; font-size: 20px; color: #10b981; text-shadow: 0 2px 4px rgba(0,0,0,0.8); pointer-events: none; z-index: 11; }
         
-        button { background-color: #3b82f6; color: white; border: none; padding: 14px; font-size: 16px; border-radius: 8px; cursor: pointer; width: 100%; font-weight: bold; margin-bottom: 10px; }
-        button:hover { background-color: #2563eb; }
-        #btn-nueva-lectura { background-color: #10b981; display: none; }
-        #btn-stop { background-color: #ef4444; margin-top: 10px; font-size: 14px; padding: 8px; }
+        /* Interfaz de controles */
+        button { background-color: #10b981; color: white; border: none; padding: 14px; font-size: 16px; border-radius: 8px; cursor: pointer; width: 100%; font-weight: bold; margin-bottom: 10px; display: none; }
+        button:hover { background-color: #059669; }
         
         .select-wrapper { text-align: left; margin-bottom: 15px; }
         label { font-size: 12px; color: #94a3b8; font-weight: 600; text-transform: uppercase; display: block; margin-bottom: 5px; }
         select { width: 100%; padding: 12px; border-radius: 8px; background-color: #0f172a; color: #f1f5f9; border: 1px solid #334155; font-size: 14px; outline: none; cursor: pointer; }
 
+        /* Tabla de resultados */
         .tabla-datos { width: 100%; margin-top: 20px; border-collapse: collapse; background: #0f172a; border-radius: 8px; overflow: hidden; display: none; text-align: left; }
         .tabla-datos th, .tabla-datos td { padding: 12px 15px; border-bottom: 1px solid #334155; }
         .tabla-datos th { background-color: #1e293b; color: #94a3b8; font-size: 13px; text-transform: uppercase; width: 35%; }
         .tabla-datos td { color: #f1f5f9; font-weight: 500; font-size: 15px; }
         .badge-tipo { display: inline-block; padding: 3px 8px; border-radius: 4px; font-size: 11px; font-weight: bold; background: #3b82f6; }
         
-        #debug-box { margin-top: 15px; background: #000; color: #00ff00; font-family: monospace; font-size: 11px; padding: 10px; text-align: left; border-radius: 6px; max-height: 80px; overflow-y: auto; border: 1px solid #334155; }
+        #debug-box { margin-top: 15px; background: #000; color: #00ff00; font-family: monospace; font-size: 11px; padding: 10px; text-align: left; border-radius: 6px; max-height: 60px; overflow-y: auto; border: 1px solid #334155; }
     </style>
 </head>
 <body>
 
 <div class="container">
     <h2>Validador de Cédulas CO</h2>
-    <p style="font-size: 13px; color: #94a3b8; margin-top: -10px;">Estable • Multi-conmutación sin bloqueos de hardware</p>
+    <p id="txt-status" style="font-size: 13px; color: #3b82f6; margin-top: -10px; font-weight: bold;">Iniciando cámara trasera automáticamente...</p>
     
     <div class="select-wrapper">
-        <label for="video-source">Seleccionar Lente:</label>
+        <label for="video-source">Lente activo:</label>
         <select id="video-source">
             <option value="environment" selected>📸 Cámara Trasera Principal</option>
             <option value="user">🤳 Cámara Frontal (Selfie)</option>
         </select>
     </div>
 
-    <button id="btn-start">Iniciar Escáner</button>
-    <button id="btn-nueva-lectura">🔄 Nueva Lectura</button>
+    <button id="btn-nueva-lectura">🔄 Escanear Siguiente Cédula</button>
 
     <div id="reader-container">
+        <div class="laser-line" id="laser"></div>
         <div id="reader-wrapper">
             <div id="reader"></div>
         </div>
-        <div id="overlay" class="congelado-overlay">✓ LECTURA CORRECTA</div>
+        <div id="overlay" class="congelado-overlay">✓ CÉDULA LEÍDA</div>
     </div>
-
-    <button id="btn-stop" style="display:none;">Apagar Cámara</button>
 
     <table id="tabla-info" class="tabla-datos">
         <tr><th>Tipo Doc</th><td><span id="res-tipo" class="badge-tipo">-</span></td></tr>
@@ -68,21 +71,22 @@
         <tr><th>Género</th><td id="res-genero">-</td></tr>
     </table>
 
-    <div id="debug-box">Consola: Sistema inicializado.</div>
+    <div id="debug-box">Consola: Inicializando hardware...</div>
 </div>
 
 <script>
     let html5QrcodeScanner = null;
-    const btnStart = document.getElementById('btn-start');
     const btnNuevaLectura = document.getElementById('btn-nueva-lectura');
-    const btnStop = document.getElementById('btn-stop');
     const overlay = document.getElementById('overlay');
+    const laser = document.getElementById('laser');
     const tablaInfo = document.getElementById('tabla-info');
     const debugBox = document.getElementById('debug-box');
     const cameraSelect = document.getElementById('video-source');
     const readerWrapper = document.getElementById('reader-wrapper');
+    const txtStatus = document.getElementById('txt-status');
     
     let scanActive = false;
+    let inicializadoPorToque = false;
 
     function logDebug(msg) {
         debugBox.innerHTML = `[${new Date().toLocaleTimeString()}] ${msg}`;
@@ -101,38 +105,33 @@
             osc.start(); gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.15);
             osc.stop(audioCtx.currentTime + 0.15);
         } else {
-            osc.type = 'sawtooth'; osc.frequency.setValueAtTime(220, audioCtx.currentTime);
-            gain.gain.setValueAtTime(0.2, audioCtx.currentTime);
-            osc.start(); gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
-            osc.stop(audioCtx.currentTime + 0.3);
+            osc.type = 'sawtooth'; osc.frequency.setValueAtTime(180, audioCtx.currentTime);
+            gain.gain.setValueAtTime(0.25, audioCtx.currentTime);
+            osc.start(); gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.25);
+            osc.stop(audioCtx.currentTime + 0.25);
         }
     }
 
-    // --- LA SOLUCIÓN MAESTRA: REGENERACIÓN ABSOLUTA DEL DOM ---
     function recrearNodoLector() {
-        // Al sobreescribir el contenedor padre, borramos cualquier rastro, evento colgado o canvas corrupto de la sesión anterior
         readerWrapper.innerHTML = '<div id="reader"></div>';
     }
 
-    // --- ENUMERAR HARDWARE SIN COMANDEAR ---
     function enumerarHardware() {
         Html5Qrcode.getCameras().then(devices => {
             if (devices && devices.length > 0 && devices[0].label !== "") {
                 const currentValue = cameraSelect.value;
                 cameraSelect.innerHTML = ""; 
 
-                // Mantener las directivas rápidas arriba
                 const optEnv = document.createElement('option');
                 optEnv.value = "environment";
                 optEnv.text = "📸 Cámara Trasera Principal";
                 cameraSelect.appendChild(optEnv);
 
                 devices.forEach((device) => {
-                    // Evitar duplicar las opciones genéricas si el dispositivo reporta nombres estándar
                     if (!device.label.toLowerCase().includes('front') && !device.label.toLowerCase().includes('selfie')) {
                         const option = document.createElement('option');
                         option.value = device.id;
-                        option.text = device.label || `Cámara Trasera Alterna`;
+                        option.text = device.label || `Lente Trasero Alterno`;
                         cameraSelect.appendChild(option);
                     }
                 });
@@ -147,30 +146,21 @@
         }).catch(() => {});
     }
 
-    // --- CONTROLADOR DE INTERCAMBIO DEFINITIVO ---
+    // Intercambio de lentes instantáneo
     cameraSelect.addEventListener('change', () => {
         if (html5QrcodeScanner) {
-            logDebug("Intercambiando hardware... Limpiando memoria.");
             scanActive = false;
-            
-            // Apagamos la instancia actual de forma segura
             html5QrcodeScanner.stop().then(() => {
                 html5QrcodeScanner = null;
-                // Pequeña pausa de 300ms para asegurar la liberación del silicio del teléfono
-                setTimeout(() => {
-                    ejecutarFlujoEscaneo();
-                }, 300);
+                setTimeout(ejecutarFlujoEscaneo, 250);
             }).catch(() => {
-                // Si la librería falla al detenerse, forzamos la purga manual
                 html5QrcodeScanner = null;
-                setTimeout(() => {
-                    ejecutarFlujoEscaneo();
-                }, 300);
+                setTimeout(ejecutarFlujoEscaneo, 250);
             });
         }
     });
 
-    // --- PARSERS DE CÓDIGOS ---
+    // --- PARSERS REFORZADOS ---
     function parsearPDF417(text) {
         try {
             let limpia = text.replace(/[^A-Z0-9Ñ ]/gi, ' ').toUpperCase();
@@ -213,35 +203,29 @@
         } catch (e) { return null; }
     }
 
-    // --- MOTOR DE ARRANQUE INMUNE A CONGELAMIENTO ---
+    // --- MOTOR OPERATIVO EN TIEMPO REAL ---
     function ejecutarFlujoEscaneo() {
         scanActive = true;
-        
-        // 1. ANULAR EL PASADO: Destruimos físicamente el div 'reader' y colocamos uno virgen
         recrearNodoLector();
+        laser.style.display = "block";
         
-        // 2. CREAR INSTANCIA PURA: Vinculada al nuevo nodo limpio
         html5QrcodeScanner = new Html5Qrcode("reader");
 
         const selectedValue = cameraSelect.value;
-        let configCamara;
+        let configCamara = (selectedValue === "environment" || selectedValue === "user") 
+            ? { facingMode: selectedValue } 
+            : { deviceId: selectedValue };
 
-        // Estructura adaptativa para evitar bloqueos del planificador del navegador
-        if (selectedValue === "environment") {
-            configCamara = { facingMode: "environment" };
-        } else if (selectedValue === "user") {
-            configCamara = { facingMode: "user" };
-        } else {
-            configCamara = { deviceId: selectedValue };
-        }
-
+        // CONFIGURACIÓN DE ALTA VELOCIDAD:
+        // Reducimos la caja de escaneo a una franja horizontal perfecta para códigos de barra largos de cédula
         const configVisual = { 
-            fps: 25, 
-            qrbox: (w, h) => { return { width: w * 0.9, height: h * 0.60 }; },
+            fps: 30, 
+            qrbox: (w, h) => { return { width: w * 0.88, height: h * 0.38 }; }, 
             formatsToSupport: [ Html5QrcodeSupportedFormats.QR_CODE, Html5QrcodeSupportedFormats.PDF_417 ]
         };
 
-        logDebug("Conectando con el sensor...");
+        txtStatus.innerText = "Escáner Activo • Alinee el código con la línea roja";
+        txtStatus.style.color = "#10b981";
 
         html5QrcodeScanner.start(
             configCamara, 
@@ -259,10 +243,10 @@
                     scanActive = false;
                     playSound('success');
                     
-                    // Pausar el video visualmente de forma inmediata
                     const videoEl = document.querySelector('#reader video');
                     if (videoEl) videoEl.pause();
 
+                    laser.style.display = "none";
                     document.getElementById('res-tipo').innerText = datos.tipo;
                     document.getElementById('res-cedula').innerText = datos.cedula;
                     document.getElementById('res-apellidos').innerText = datos.apellidos;
@@ -272,35 +256,33 @@
                     tablaInfo.style.display = 'table';
                     overlay.style.display = 'flex';
                     btnNuevaLectura.style.display = 'block';
-                    btnStop.style.display = 'none';
-                    logDebug(`CC ${datos.cedula} procesada.`);
+                    
+                    txtStatus.innerText = "Lectura completada con éxito";
+                    txtStatus.style.color = "#3b82f6";
+                    logDebug(`Cédula procesada.`);
                 } else {
                     scanActive = false;
                     playSound('error');
-                    alert("Código detectado pero no contiene datos válidos de una cédula colombiana.");
-                    prepararSiguienteLectura();
+                    logDebug("Código corrupto o inválido.");
+                    setTimeout(prepararSiguienteLectura, 800);
                 }
             },
-            (err) => { /* Flujo continuo pasivo */ }
+            () => {} // Escaneo continuo silencioso
         ).then(() => {
-            logDebug("Transmisión activa estable.");
-            // Una vez encendida la cámara, los permisos del navegador están desbloqueados. 
-            // Aprovechamos para mapear los nombres de lentes físicos si existen.
+            logDebug("Hardware en línea.");
             setTimeout(enumerarHardware, 350);
         }).catch(err => {
-            logDebug(`Error de inicialización: ${err}`);
+            logDebug("Esperando interacción del usuario...");
+            txtStatus.innerText = "⚠️ Toque la pantalla para activar la cámara";
+            txtStatus.style.color = "#f59e0b";
         });
     }
 
     function arrancarEscaner() {
         if (audioCtx.state === 'suspended') audioCtx.resume();
-        
-        btnStart.style.display = 'none';
         btnNuevaLectura.style.display = 'none';
-        btnStop.style.display = 'block';
         tablaInfo.style.display = 'none';
         overlay.style.display = 'none';
-
         ejecutarFlujoEscaneo();
     }
 
@@ -308,7 +290,7 @@
         if (html5QrcodeScanner) {
             html5QrcodeScanner.stop().then(() => {
                 html5QrcodeScanner = null;
-                setTimeout(arrancarEscaner, 200);
+                setTimeout(arrancarEscaner, 150);
             }).catch(() => {
                 html5QrcodeScanner = null;
                 arrancarEscaner();
@@ -318,35 +300,28 @@
         }
     }
 
-    // Inicialización suave al cargar la página
+    // --- ARRANQUE AUTOMÁTICO INTELIGENTE ---
     window.addEventListener('DOMContentLoaded', () => {
-        // Reiniciar el selector a la cámara trasera por defecto siempre que la página se refresque
         cameraSelect.value = "environment";
-        Html5Qrcode.getCameras().then(() => enumerarHardware()).catch(() => {});
+        
+        // Intento 1: Ejecución inmediata automática
+        setTimeout(arrancarEscaner, 400);
+
+        // Intento 2: Salvavidas anti-bloqueo del navegador por falta de gestos de usuario
+        const activarPorToqueGlobal = () => {
+            if (!scanActive && !inicializadoPorToque) {
+                inicializadoPorToque = true;
+                arrancarEscaner();
+                // Limpiamos el evento una vez activado
+                document.removeEventListener('click', activarPorToqueGlobal);
+                document.removeEventListener('touchstart', activarPorToqueGlobal);
+            }
+        };
+        document.addEventListener('click', activarPorToqueGlobal);
+        document.addEventListener('touchstart', activarPorToqueGlobal);
     });
 
-    btnStart.addEventListener('click', arrancarEscaner);
     btnNuevaLectura.addEventListener('click', prepararSiguienteLectura);
-    
-    btnStop.addEventListener('click', () => {
-        if (html5QrcodeScanner) {
-            html5QrcodeScanner.stop().then(() => {
-                html5QrcodeScanner = null;
-                scanActive = false;
-                btnStart.style.display = 'block';
-                btnNuevaLectura.style.display = 'none';
-                btnStop.style.display = 'none';
-                tablaInfo.style.display = 'none';
-                overlay.style.display = 'none';
-                logDebug("Cámara apagada y liberada.");
-            }).catch(() => {
-                html5QrcodeScanner = null;
-                scanActive = false;
-                btnStart.style.display = 'block';
-                btnStop.style.display = 'none';
-            });
-        }
-    });
 </script>
 </body>
 </html>
