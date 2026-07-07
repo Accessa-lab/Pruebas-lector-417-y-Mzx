@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Validador de Cédulas CO</title>
+    <title>Validador de Cédulas CO - Hardcore Fix</title>
     <script src="https://unpkg.com/html5-qrcode"></script>
     <style>
         body { font-family: 'Segoe UI', Arial, sans-serif; text-align: center; margin: 0; padding: 15px; background-color: #0f172a; color: #f8fafc; }
@@ -11,27 +11,27 @@
         #reader-container { position: relative; width: 100%; border-radius: 12px; overflow: hidden; background: #000; border: 2px solid #3b82f6; }
         #reader { width: 100%; }
         
-        /* Capa visual para indicar congelamiento */
-        .congelado-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(26, 188, 156, 0.2); display: none; justify-content: center; align-items: center; font-weight: bold; font-size: 20px; color: #2ecc71; text-shadow: 0 2px 4px rgba(0,0,0,0.8); pointer-events: none; }
+        .congelado-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(26, 188, 156, 0.25); display: none; justify-content: center; align-items: center; font-weight: bold; font-size: 20px; color: #2ecc71; text-shadow: 0 2px 4px rgba(0,0,0,0.8); pointer-events: none; }
         
-        button { background-color: #3b82f6; color: white; border: none; padding: 14px; font-size: 16px; border-radius: 8px; cursor: pointer; width: 100%; font-weight: bold; margin-bottom: 15px; transition: background 0.2s; }
-        button:active { transform: scale(0.98); }
+        button { background-color: #3b82f6; color: white; border: none; padding: 14px; font-size: 16px; border-radius: 8px; cursor: pointer; width: 100%; font-weight: bold; margin-bottom: 15px; }
         #btn-nueva-lectura { background-color: #10b981; display: none; }
         #btn-stop { background-color: #ef4444; margin-top: 10px; font-size: 14px; padding: 8px; }
 
-        /* Diseño de la Tabla de Datos */
         .tabla-datos { width: 100%; margin-top: 20px; border-collapse: collapse; background: #0f172a; border-radius: 8px; overflow: hidden; display: none; text-align: left; }
         .tabla-datos th, .tabla-datos td { padding: 12px 15px; border-bottom: 1px solid #334155; }
         .tabla-datos th { background-color: #1e293b; color: #94a3b8; font-size: 13px; text-transform: uppercase; width: 35%; }
         .tabla-datos td { color: #f1f5f9; font-weight: 500; font-size: 15px; }
         .badge-tipo { display: inline-block; padding: 3px 8px; border-radius: 4px; font-size: 11px; font-weight: bold; background: #3b82f6; }
+        
+        /* Consola de diagnóstico */
+        #debug-box { margin-top: 15px; background: #000; color: #00ff00; font-family: monospace; font-size: 11px; padding: 10px; text-align: left; border-radius: 6px; max-height: 80px; overflow-y: auto; border: 1px solid #334155; }
     </style>
 </head>
 <body>
 
 <div class="container">
-    <h2>Validador de Cédulas</h2>
-    <p style="font-size: 13px; color: #94a3b8; margin-top: -10px;">Escanea, valida visualmente y autoriza el guardado</p>
+    <h2>Validador de Cédulas CO</h2>
+    <p style="font-size: 13px; color: #94a3b8; margin-top: -10px;">Optimizado para lectura pesada PDF417 y QR Digital</p>
     
     <button id="btn-start">Iniciar Escáner</button>
     <button id="btn-nueva-lectura">🔄 Nueva Lectura</button>
@@ -44,27 +44,14 @@
     <button id="btn-stop" style="display:none;">Apagar Cámara</button>
 
     <table id="tabla-info" class="tabla-datos">
-        <tr>
-            <th>Tipo Doc</th>
-            <td><span id="res-tipo" class="badge-tipo">-</span></td>
-        </tr>
-        <tr>
-            <th>Documento</th>
-            <td id="res-cedula" style="color: #3b82f6; font-weight: bold; font-size: 18px;">-</td>
-        </tr>
-        <tr>
-            <th>Apellidos</th>
-            <td id="res-apellidos">-</td>
-        </tr>
-        <tr>
-            <th>Nombres</th>
-            <td id="res-nombres">-</td>
-        </tr>
-        <tr>
-            <th>Género</th>
-            <td id="res-genero">-</td>
-        </tr>
+        <tr><th>Tipo Doc</th><td><span id="res-tipo" class="badge-tipo">-</span></td></tr>
+        <tr><th>Documento</th><td id="res-cedula" style="color: #3b82f6; font-weight: bold; font-size: 18px;">-</td></tr>
+        <tr><th>Apellidos</th><td id="res-apellidos">-</td></tr>
+        <tr><th>Nombres</th><td id="res-nombres">-</td></tr>
+        <tr><th>Género</th><td id="res-genero">-</td></tr>
     </table>
+
+    <div id="debug-box">Consola de diagnóstico: Esperando inicio...</div>
 </div>
 
 <script>
@@ -74,8 +61,13 @@
     const btnStop = document.getElementById('btn-stop');
     const overlay = document.getElementById('overlay');
     const tablaInfo = document.getElementById('tabla-info');
+    const debugBox = document.getElementById('debug-box');
     
     let scanActive = false;
+
+    function logDebug(msg) {
+        debugBox.innerHTML = `[${new Date().toLocaleTimeString()}] ${msg}`;
+    }
 
     // --- AUDIO NATIVO ---
     const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -84,7 +76,6 @@
         const osc = audioCtx.createOscillator();
         const gain = audioCtx.createGain();
         osc.connect(gain); gain.connect(audioCtx.destination);
-
         if (type === 'success') {
             osc.type = 'sine'; osc.frequency.setValueAtTime(880, audioCtx.currentTime);
             gain.gain.setValueAtTime(0.3, audioCtx.currentTime);
@@ -98,25 +89,51 @@
         }
     }
 
-    // --- ACCIÓN DE GUARDADO ---
-    function registrarEnBaseDeDatos(datos) {
-        // Ejecuta el guardado en segundo plano inmediatamente al validar la lectura
-        console.log("Guardado en sistema:", datos);
-    }
-
-    // --- PARSERS ---
+    // --- PARSER ALTA RESILIENCIA PARA PDF417 TRADICIONAL ---
     function parsearPDF417(text) {
         try {
-            const numDocMatch = text.match(/\d{5,11}/);
-            if (!numDocMatch) return null;
-            const cedula = numDocMatch[0];
-            const inicioDatos = text.indexOf(cedula) + cedula.length;
-            const bloques = text.substring(inicioDatos).split(/[\x00-\x1F\x7F-\x9F]+/).filter(b => b.trim().length > 1);
-            const textos = bloques.filter(b => /^[A-ZÑÁÉÍÓÚ\s]+$/i.test(b.trim()));
-            return { tipo: "Física (PDF417)", cedula: cedula, apellidos: `${textos[0] || ''} ${textos[1] || ''}`.trim(), nombres: `${textos[2] || ''} ${textos[3] || ''}`.trim(), genero: text.includes("M") ? "Masculino" : text.includes("F") ? "Femenino" : "No detectado" };
-        } catch (e) { return null; }
+            // 1. Limpieza radical: Reemplazamos cualquier carácter no alfanumérico o control por espacios limpios
+            let limpia = text.replace(/[^A-Z0-9Ñ ]/gi, ' ').toUpperCase();
+            
+            // 2. Extraemos todos los bloques numéricos puros de la cadena
+            let bloquesNumeros = limpia.match(/\d{5,12}/g);
+            if (!bloquesNumeros) return null;
+            
+            // El primer bloque largo de números en la cédula amarilla es el documento
+            let cedulaRaw = bloquesNumeros[0];
+            // Quitamos ceros a la izquierda sobrantes del formato binario (ej: 001023456 -> 1023456)
+            let cedula = parseInt(cedulaRaw, 10).toString();
+
+            // 3. Aislamos el texto que viene inmediatamente DESPUÉS del número de cédula
+            let posCedula = limpia.indexOf(cedulaRaw);
+            let subcadenaTexto = limpia.substring(posCedula + cedulaRaw.length);
+            
+            // 4. Extraemos palabras individuales (Tokens alfabéticos de más de 2 letras)
+            let palabras = subcadenaTexto.match(/[A-ZÑ]{2,}/g) || [];
+            
+            // Estructura posicional estándar de la Registraduría en texto plano extraído:
+            // palabras[0] = Primer Apellido, palabras[1] = Segundo Apellido, palabras[2] = Primer Nombre...
+            let apellido1 = palabras[0] || "";
+            let apellido2 = palabras[1] || "";
+            let nombre1 = palabras[2] || "";
+            let nombre2 = palabras[3] || "";
+
+            // Si no logramos extraer al menos un nombre y apellido, el parseo falló
+            if (!apellido1 || !nombre1) return null;
+
+            return {
+                tipo: "Física (PDF417)",
+                cedula: cedula,
+                apellidos: `${apellido1} ${apellido2}`.trim(),
+                nombres: `${nombre1} ${nombre2}`.trim(),
+                genero: text.includes("M") ? "Masculino" : text.includes("F") ? "Femenino" : "No detectado"
+            };
+        } catch (e) {
+            return null;
+        }
     }
 
+    // --- PARSER QR DIGITAL ---
     function parsearQRDigital(text) {
         if (!text.includes("<<")) return null;
         try {
@@ -127,22 +144,25 @@
             const cedula = cedulaMatch ? parseInt(cedulaMatch[1], 10).toString() : null;
             const bloqueNombres = limpia.match(/([A-Z<]+)<<([A-Z<]+)/);
             if (!cedula || !bloqueNombres) return null;
-            return { tipo: "Digital (QR)", cedula: cedula, apellidos: bloqueNombres[1].replace(/</g, ' ').trim(), nombres: bloqueNombres[2].replace(/</g, ' ').trim(), genero: limpia.includes("M") ? "Masculino" : "Femenino" };
+            return {
+                tipo: "Digital (QR)",
+                cedula: cedula,
+                apellidos: bloqueNombres[1].replace(/</g, ' ').trim(),
+                nombres: bloqueNombres[2].replace(/</g, ' ').trim(),
+                genero: limpia.includes("M") ? "Masculino" : "Femenino"
+            };
         } catch (e) { return null; }
     }
 
-    // --- LOGICA DE CONGELACIÓN Y FLUJO ---
+    // --- FLUJO OPERATIVO ---
     function congelarYMostrar(datos) {
         scanActive = false;
         playSound('success');
 
-        // 1. Congelar el video pausando el elemento de hardware de la cámara
+        // Congelar fotograma pausando el stream de video directo en la pantalla
         const videoEl = document.querySelector('#reader video');
-        if (videoEl) {
-            videoEl.pause();
-        }
+        if (videoEl) videoEl.pause();
 
-        // 2. Desplegar los datos en la tabla
         document.getElementById('res-tipo').innerText = datos.tipo;
         document.getElementById('res-cedula').innerText = datos.cedula;
         document.getElementById('res-apellidos').innerText = datos.apellidos;
@@ -150,14 +170,11 @@
         document.getElementById('res-genero').innerText = datos.genero;
         
         tablaInfo.style.display = 'table';
-        overlay.style.display = 'flex'; // Muestra el aviso verde sobre el video congelado
+        overlay.style.display = 'flex';
 
-        // 3. Modificar botones de control
         btnNuevaLectura.style.display = 'block';
         btnStop.style.display = 'none';
-
-        // 4. Registrar de una vez en el sistema
-        registrarEnBaseDeDatos(datos);
+        logDebug(`Validación lista para CC: ${datos.cedula}`);
     }
 
     function arrancarEscaner() {
@@ -168,24 +185,36 @@
         btnStop.style.display = 'block';
         tablaInfo.style.display = 'none';
         overlay.style.display = 'none';
+        logDebug("Iniciando cámara en Full HD (1080p)...");
 
         scanActive = true;
         html5QrcodeScanner = new Html5Qrcode("reader");
 
         const config = { 
-            fps: 20, 
-            qrbox: (w, h) => { return { width: w * 0.9, height: h * 0.5 }; },
-            formatsToSupport: [ Html5QrcodeSupportedFormats.QR_CODE, Html5QrcodeSupportedFormats.PDF_417 ]
+            fps: 30, // Máxima velocidad de muestreo por segundo
+            qrbox: (w, h) => { return { width: w * 0.9, height: h * 0.55 }; },
+            formatsToSupport: [ Html5QrcodeSupportedFormats.QR_CODE, Html5QrcodeSupportedFormats.PDF_417 ],
+            experimentalFeatures: {
+                useBarCodeDetectorIfSupported: true // Activa aceleración por hardware nativa en Android/Chrome
+            }
+        };
+
+        // LIMITACIONES DE VIDEO INYECTADAS DIRECTAMENTE AL HARDWARE
+        const videoConstraints = {
+            facingMode: "environment",
+            width: { ideal: 1920, min: 1280 },  // Forzamos al sensor a trabajar en alta definición
+            height: { ideal: 1080, min: 720 }
         };
 
         html5QrcodeScanner.start(
-            { facingMode: "environment" },
+            videoConstraints,
             config,
             (decodedText, decodedResult) => {
-                if (!scanActive) return; // Si ya se congeló, ignorar lecturas residuales
+                if (!scanActive) return;
 
                 let datos = null;
                 const format = decodedResult.result.format.formatName;
+                logDebug(`¡Código ${format} detectado! Procesando...`);
 
                 if (format === "PDF_417") datos = parsearPDF417(decodedText);
                 else if (format === "QR_CODE") datos = parsearQRDigital(decodedText);
@@ -193,26 +222,25 @@
                 if (datos) {
                     congelarYMostrar(datos);
                 } else {
-                    // Decodificación corrupta o parcial
                     scanActive = false;
                     playSound('error');
-                    alert("Lectura errónea. Por favor intente de nuevo.");
+                    logDebug("ERROR: Código detectado pero estructura ilegible.");
+                    alert("Estructura de datos inválida o corrupta. Reintente.");
                     prepararSiguienteLectura();
                 }
             },
-            (err) => {}
+            (err) => { /* Escaneo silencioso en ráfaga */ }
         ).catch(err => {
-            alert("Error de cámara: " + err);
+            logDebug(`Error crítico: ${err}`);
+            alert("No se pudo iniciar la cámara en alta resolución.");
         });
     }
 
     function prepararSiguienteLectura() {
         if (html5QrcodeScanner) {
-            // Destruimos la instancia anterior para liberar memoria y limpiar el canvas del buffer
             html5QrcodeScanner.stop().then(() => {
                 arrancarEscaner();
-            }).catch(()=>{
-                // Si la cámara ya estaba pausada o detenida por el flujo
+            }).catch(() => {
                 arrancarEscaner();
             });
         } else {
@@ -231,6 +259,7 @@
                 btnStop.style.display = 'none';
                 tablaInfo.style.display = 'none';
                 overlay.style.display = 'none';
+                logDebug("Escáner apagado.");
             });
         }
     });
