@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Validador de Cédulas CO - Selector de Cámara</title>
+    <title>Validador de Cédulas CO - Live Switch</title>
     <script src="https://unpkg.com/html5-qrcode"></script>
     <style>
         body { font-family: 'Segoe UI', Arial, sans-serif; text-align: center; margin: 0; padding: 15px; background-color: #0f172a; color: #f8fafc; }
@@ -13,18 +13,15 @@
         
         .congelado-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(26, 188, 156, 0.25); display: none; justify-content: center; align-items: center; font-weight: bold; font-size: 20px; color: #2ecc71; text-shadow: 0 2px 4px rgba(0,0,0,0.8); pointer-events: none; }
         
-        /* Estilos de Controles */
         button { background-color: #3b82f6; color: white; border: none; padding: 14px; font-size: 16px; border-radius: 8px; cursor: pointer; width: 100%; font-weight: bold; margin-bottom: 10px; }
         button:hover { background-color: #2563eb; }
         #btn-nueva-lectura { background-color: #10b981; display: none; }
         #btn-stop { background-color: #ef4444; margin-top: 10px; font-size: 14px; padding: 8px; }
         
-        /* Estilo del Selector de Cámara */
         .select-wrapper { text-align: left; margin-bottom: 15px; }
         label { font-size: 12px; color: #94a3b8; font-weight: 600; text-transform: uppercase; display: block; margin-bottom: 5px; }
         select { width: 100%; padding: 12px; border-radius: 8px; background-color: #0f172a; color: #f1f5f9; border: 1px solid #334155; font-size: 14px; outline: none; cursor: pointer; }
 
-        /* Tabla de Resultados */
         .tabla-datos { width: 100%; margin-top: 20px; border-collapse: collapse; background: #0f172a; border-radius: 8px; overflow: hidden; display: none; text-align: left; }
         .tabla-datos th, .tabla-datos td { padding: 12px 15px; border-bottom: 1px solid #334155; }
         .tabla-datos th { background-color: #1e293b; color: #94a3b8; font-size: 13px; text-transform: uppercase; width: 35%; }
@@ -38,11 +35,11 @@
 
 <div class="container">
     <h2>Validador de Cédulas CO</h2>
-    <p style="font-size: 13px; color: #94a3b8; margin-top: -10px;">Control manual de lentes y lectura de alta velocidad</p>
+    <p style="font-size: 13px; color: #94a3b8; margin-top: -10px;">Cambio de lente en tiempo real con resolución adaptativa</p>
     
-    <div class="select-wrapper" id="camera-selector-area">
+    <div class="select-wrapper">
         <label for="video-source">Seleccionar Cámara:</label>
-        <select id="video-source"><option value="">Cargando cámaras disponibles...</option></select>
+        <select id="video-source"><option value="">Cargando cámaras...</option></select>
     </div>
 
     <button id="btn-start">Iniciar Escáner</button>
@@ -102,22 +99,20 @@
         }
     }
 
-    // --- ENUMERAR Y CARGAR CÁMARAS AL INICIAR ---
+    // --- CARGA DE HARDWARE ---
     function cargarCamarasDisponibles() {
         Html5Qrcode.getCameras().then(devices => {
             if (devices && devices.length > 0) {
-                cameraSelect.innerHTML = ""; // Limpiar loading
-                
+                cameraSelect.innerHTML = ""; 
                 let indiceSeleccionado = 0;
 
                 devices.forEach((device, index) => {
                     const option = document.createElement('option');
                     option.value = device.id;
-                    // Si el nombre viene vacío, le ponemos un identificador genérico
-                    option.text = device.label || `Cámara alternativa ${index + 1}`;
+                    option.text = device.label || `Lente alternativo ${index + 1}`;
                     cameraSelect.appendChild(option);
 
-                    // Pista inteligente: si el nombre sugiere que es la trasera principal, la dejamos marcada por defecto
+                    // Preselección inteligente del lente trasero principal
                     const labelLow = option.text.toLowerCase();
                     if ((labelLow.includes('back') || labelLow.includes('trasera') || labelLow.includes('rear')) 
                         && !labelLow.includes('wide') && !labelLow.includes('macro') && !labelLow.includes('ultra')) {
@@ -125,25 +120,38 @@
                     }
                 });
 
-                // Si no se encontró por palabra clave, por norma general en dispositivos móviles 
-                // la última cámara de la lista suele ser el lente trasero.
                 if (indiceSeleccionado === 0 && devices.length > 1) {
                     indiceSeleccionado = devices.length - 1; 
                 }
 
                 cameraSelect.selectedIndex = indiceSeleccionado;
-                logDebug(`Cámaras cargadas. Sugerida: ${cameraSelect.options[indiceSeleccionado].text}`);
+                logDebug(`Cámaras listas. Sugerida: ${cameraSelect.options[indiceSeleccionado].text}`);
             } else {
                 cameraSelect.innerHTML = "<option value=''>No se detectaron cámaras</option>";
             }
         }).catch(err => {
-            logDebug(`Permiso requerido: Haga clic en Iniciar para otorgarlo.`);
-            cameraSelect.innerHTML = "<option value=''>Cámara por defecto (Entorno)</option>";
+            logDebug("Falta permiso de cámara. Presione iniciar para solicitarlo.");
+            cameraSelect.innerHTML = "<option value=''>Permiso pendiente...</option>";
         });
     }
 
-    // Ejecutar la carga de cámaras inmediatamente al abrir la página
     window.addEventListener('DOMContentLoaded', cargarCamarasDisponibles);
+
+    // --- EVENTO DE CAMBIO EN CALIENTE (HOT-SWAP) ---
+    cameraSelect.addEventListener('change', () => {
+        // Si el usuario cambia de cámara mientras el escáner está encendido, reiniciamos el flujo automáticamente
+        if (scanActive && html5QrcodeScanner) {
+            logDebug("Intercambiando lente en tiempo real...");
+            html5QrcodeScanner.stop().then(() => {
+                ejecutarFlujoEscaneo();
+            }).catch(err => {
+                logDebug(`Error al apagar para cambio: ${err}`);
+                ejecutarFlujoEscaneo();
+            });
+        } else {
+            logDebug(`Lente preparado: ${cameraSelect.options[cameraSelect.selectedIndex].text}`);
+        }
+    });
 
     // --- PARSERS ---
     function parsearPDF417(text) {
@@ -154,22 +162,16 @@
             
             let cedulaRaw = bloquesNumeros[0];
             let cedula = parseInt(cedulaRaw, 10).toString();
-
             let posCedula = limpia.indexOf(cedulaRaw);
             let subcadenaTexto = limpia.substring(posCedula + cedulaRaw.length);
             let palabras = subcadenaTexto.match(/[A-ZÑ]{2,}/g) || [];
             
-            let apellido1 = palabras[0] || "";
-            let apellido2 = palabras[1] || "";
-            let nombre1 = palabras[2] || "";
-            let nombre2 = palabras[3] || "";
-
-            if (!apellido1 || !nombre1) return null;
+            if (!palabras[0] || !palabras[2]) return null;
 
             return {
                 tipo: "Física (PDF417)", cedula: cedula,
-                apellidos: `${apellido1} ${apellido2}`.trim(),
-                nombres: `${nombre1} ${nombre2}`.trim(),
+                apellidos: `${palabras[0]} ${palabras[1] || ""}`.trim(),
+                nombres: `${palabras[2]} ${palabras[3] || ""}`.trim(),
                 genero: text.includes("M") ? "Masculino" : text.includes("F") ? "Femenino" : "No detectado"
             };
         } catch (e) { return null; }
@@ -194,26 +196,67 @@
         } catch (e) { return null; }
     }
 
-    // --- FLUJO OPERATIVO ---
-    function congelarYMostrar(datos) {
-        scanActive = false;
-        playSound('success');
-
-        const videoEl = document.querySelector('#reader video');
-        if (videoEl) videoEl.pause();
-
-        document.getElementById('res-tipo').innerText = datos.tipo;
-        document.getElementById('res-cedula').innerText = datos.cedula;
-        document.getElementById('res-apellidos').innerText = datos.apellidos;
-        document.getElementById('res-nombres').innerText = datos.nombres;
-        document.getElementById('res-genero').innerText = datos.genero;
+    // --- MOTOR DE ESCANEO ---
+    function ejecutarFlujoEscaneo() {
+        scanActive = true;
         
-        tablaInfo.style.display = 'table';
-        overlay.style.display = 'flex';
+        // Evitamos duplicar la instancia interna de la librería
+        if (!html5QrcodeScanner) {
+            html5QrcodeScanner = new Html5Qrcode("reader");
+        }
 
-        btnNuevaLectura.style.display = 'block';
-        btnStop.style.display = 'none';
-        logDebug(`Validación en pantalla para CC: ${datos.cedula}`);
+        const config = { 
+            fps: 25, 
+            qrbox: (w, h) => { return { width: w * 0.9, height: h * 0.55 }; },
+            formatsToSupport: [ Html5QrcodeSupportedFormats.QR_CODE, Html5QrcodeSupportedFormats.PDF_417 ],
+            videoConstraints: { width: { ideal: 1280 }, height: { ideal: 720 } }
+        };
+
+        const camaraSeleccionadaId = cameraSelect.value;
+        const targetCamara = camaraSeleccionadaId ? camaraSeleccionadaId : { facingMode: "environment" };
+
+        logDebug(`Iniciando: ${cameraSelect.options[cameraSelect.selectedIndex]?.text || "Por defecto"}`);
+
+        html5QrcodeScanner.start(
+            targetCamara, 
+            config,
+            (decodedText, decodedResult) => {
+                if (!scanActive) return;
+
+                let datos = null;
+                const format = decodedResult.result.format.formatName;
+
+                if (format === "PDF_417") datos = parsearPDF417(decodedText);
+                else if (format === "QR_CODE") datos = parsearQRDigital(decodedText);
+
+                if (datos) {
+                    scanActive = false;
+                    playSound('success');
+                    const videoEl = document.querySelector('#reader video');
+                    if (videoEl) videoEl.pause();
+
+                    document.getElementById('res-tipo').innerText = datos.tipo;
+                    document.getElementById('res-cedula').innerText = datos.cedula;
+                    document.getElementById('res-apellidos').innerText = datos.apellidos;
+                    document.getElementById('res-nombres').innerText = datos.nombres;
+                    document.getElementById('res-genero').innerText = datos.genero;
+                    
+                    tablaInfo.style.display = 'table';
+                    overlay.style.display = 'flex';
+                    btnNuevaLectura.style.display = 'block';
+                    btnStop.style.display = 'none';
+                    logDebug(`Lectura Exitosa: CC ${datos.cedula}`);
+                } else {
+                    scanActive = false;
+                    playSound('error');
+                    alert("Estructura de código no reconocida. Intente enfocar de nuevo.");
+                    prepararSiguienteLectura();
+                }
+            },
+            (err) => { /* Loop ráfaga */ }
+        ).catch(err => {
+            logDebug(`Fallo de inicio: ${err}`);
+        });
     }
 
     function arrancarEscaner() {
@@ -225,88 +268,34 @@
         tablaInfo.style.display = 'none';
         overlay.style.display = 'none';
 
-        scanActive = true;
-        html5QrcodeScanner = new Html5Qrcode("reader");
-
-        const config = { 
-            fps: 25, 
-            qrbox: (w, h) => { return { width: w * 0.9, height: h * 0.55 }; },
-            formatsToSupport: [ Html5QrcodeSupportedFormats.QR_CODE, Html5QrcodeSupportedFormats.PDF_417 ],
-            videoConstraints: {
-                width: { ideal: 1280 },
-                height: { ideal: 720 }
-            }
-        };
-
-        // Capturar la cámara seleccionada en el menú desplegable
-        const camaraSeleccionadaId = cameraSelect.value;
-
-        // Definimos el target de inicio: si hay un ID de cámara del selector lo usamos, de lo contrario usamos la trasera genérica
-        const targetCamara = camaraSeleccionadaId ? camaraSeleccionadaId : { facingMode: "environment" };
-        
-        logDebug("Encendiendo lente seleccionado...");
-
-        html5QrcodeScanner.start(
-            targetCamara, 
-            config,
-            (decodedText, decodedResult) => {
-                if (!scanActive) return;
-
-                let datos = null;
-                const format = decodedResult.result.format.formatName;
-                logDebug(`Código ${format} detectado...`);
-
-                if (format === "PDF_417") datos = parsearPDF417(decodedText);
-                else if (format === "QR_CODE") datos = parsearQRDigital(decodedText);
-
-                if (datos) {
-                    congelarYMostrar(datos);
-                } else {
-                    scanActive = false;
-                    playSound('error');
-                    logDebug("Fallo: Estructura de código de barras no válida.");
-                    alert("No se reconocieron campos de la Registraduría. Reintente.");
-                    prepararSiguienteLectura();
-                }
-            },
-            (err) => { /* Ciclo continuo */ }
-        ).catch(err => {
-            logDebug(`Error: ${err}`);
-            // Si falla por ID, reintentar forzando la cámara trasera genérica del sistema
-            logDebug("Reintentando con propiedad environment...");
-            html5QrcodeScanner.start({ facingMode: "environment" }, config, (txt, res) => {
-                // Callback idéntico de emergencia
-                let datos = res.result.format.formatName === "PDF_417" ? parsearPDF417(txt) : parsearQRDigital(txt);
-                if (datos) congelarYMostrar(datos);
-            }, () => {});
-        });
+        // Si las etiquetas estaban vacías (por bloqueo de privacidad inicial), las refrescamos al dar clic
+        if (cameraSelect.value === "") {
+            Html5Qrcode.getCameras().then(() => {
+                cargarCamarasDisponibles();
+                setTimeout(ejecutarFlujoEscaneo, 300);
+            }).catch(() => ejecutarFlujoEscaneo());
+        } else {
+            ejecutarFlujoEscaneo();
+        }
     }
 
     function prepararSiguienteLectura() {
         if (html5QrcodeScanner) {
             html5QrcodeScanner.stop().then(() => {
                 arrancarEscaner();
-            }).catch(() => {
-                arrancarEscaner();
-            });
+            }).catch(() => arrancarEscaner());
         } else {
             arrancarEscaner();
         }
     }
 
-    btnStart.addEventListener('click', () => {
-        // Al interactuar por primera vez, si las etiquetas estaban vacías, volvemos a listar con los permisos ya concedidos
-        if(cameraSelect.value === "") {
-            Html5Qrcode.getCameras().then(() => cargarCamarasDisponibles());
-        }
-        arrancarEscaner();
-    });
-    
+    btnStart.addEventListener('click', arrancarEscaner);
     btnNuevaLectura.addEventListener('click', prepararSiguienteLectura);
     
     btnStop.addEventListener('click', () => {
         if (html5QrcodeScanner) {
             html5QrcodeScanner.stop().then(() => {
+                scanActive = false;
                 btnStart.style.display = 'block';
                 btnNuevaLectura.style.display = 'none';
                 btnStop.style.display = 'none';
