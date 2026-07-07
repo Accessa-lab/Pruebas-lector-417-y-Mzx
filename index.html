@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Validador de Cédulas CO - Prioridad Trasera</title>
+    <title>Validador de Cédulas CO - Hard Lock</title>
     <script src="https://unpkg.com/html5-qrcode"></script>
     <style>
         body { font-family: 'Segoe UI', Arial, sans-serif; text-align: center; margin: 0; padding: 15px; background-color: #0f172a; color: #f8fafc; }
@@ -35,12 +35,12 @@
 
 <div class="container">
     <h2>Validador de Cédulas CO</h2>
-    <p style="font-size: 13px; color: #94a3b8; margin-top: -10px;">Arranque forzado en cámara trasera principal</p>
+    <p style="font-size: 13px; color: #94a3b8; margin-top: -10px;">Lector optimizado de códigos de barras de alta densidad</p>
     
     <div class="select-wrapper">
-        <label for="video-source">Lente de Captura:</label>
+        <label for="video-source">Seleccionar Lente:</label>
         <select id="video-source">
-            <option value="environment" selected>📸 Cámara Trasera Principal (Por Defecto)</option>
+            <option value="environment" selected>📸 Forzar Cámara Trasera (Principal)</option>
             <option value="user">🤳 Cámara Frontal (Selfie)</option>
         </select>
     </div>
@@ -63,7 +63,7 @@
         <tr><th>Género</th><td id="res-genero">-</td></tr>
     </table>
 
-    <div id="debug-box">Consola: Listo para iniciar.</div>
+    <div id="debug-box">Consola: Esperando ejecución...</div>
 </div>
 
 <script>
@@ -102,62 +102,46 @@
         }
     }
 
-    // --- CARGAR Y ENUMERAR LENTES REALES ---
-    // Esta función se ejecuta en el arranque blando y se RE-EJECUTA con la cámara encendida para romper el bloqueo de privacidad
-    function actualizarListaHardwareReal(idActivo = null) {
+    // --- LISTAR CÁMARAS DISPONIBLES ---
+    function enumerarHardwareDisponible() {
         Html5Qrcode.getCameras().then(devices => {
             if (devices && devices.length > 0 && devices[0].label !== "") {
-                const valorGuardado = idActivo || cameraSelect.value;
-                cameraSelect.innerHTML = ""; // Limpiar los modos genéricos iniciales
+                const currentValue = cameraSelect.value;
+                cameraSelect.innerHTML = ""; 
 
-                let indiceSeleccionado = 0;
+                // Mantener los accesos directos por directiva nativa arriba
+                const optEnv = document.createElement('option');
+                optEnv.value = "environment";
+                optEnv.text = "📸 Forzar Cámara Trasera (Principal)";
+                cameraSelect.appendChild(optEnv);
 
-                devices.forEach((device, index) => {
+                devices.forEach((device) => {
                     const option = document.createElement('option');
                     option.value = device.id;
-                    option.text = device.label;
+                    option.text = device.label || `Lente ID: ${device.id.substring(0,5)}...`;
                     cameraSelect.appendChild(option);
-
-                    // Si coincide con el ID que ya pusimos a andar, lo dejamos activo en interfaz
-                    if (device.id === valorGuardado) {
-                        indiceSeleccionado = index;
-                    } 
-                    // Si veníamos de modo genérico "environment", buscamos el lente que no sea macro/wide
-                    else if (valorGuardado === "environment") {
-                        const lbl = device.label.toLowerCase();
-                        if ((lbl.includes('back') || lbl.includes('trasera') || lbl.includes('rear')) &&
-                            !lbl.includes('wide') && !lbl.includes('macro') && !lbl.includes('ultra')) {
-                            indiceSeleccionado = index;
-                        }
-                    }
                 });
 
-                cameraSelect.selectedIndex = indiceSeleccionado;
-                logDebug(`Lentes sincronizados: ${cameraSelect.options[indiceSeleccionado].text}`);
+                const optUser = document.createElement('option');
+                optUser.value = "user";
+                optUser.text = "🤳 Cámara Frontal (Selfie)";
+                cameraSelect.appendChild(optUser);
+
+                cameraSelect.value = currentValue;
+                logDebug("Mapeo de lentes actualizado.");
             }
-        }).catch(err => {
-            // Silencioso, mantiene las opciones nativas seguras en pantalla
-        });
+        }).catch(() => { /* Silencioso hasta el primer click */ });
     }
 
-    // Intentar mapeo inicial (si ya había permisos previos de otra sesión)
-    window.addEventListener('DOMContentLoaded', () => actualizarListaHardwareReal());
-
-    // --- CONTROL DE CAMBIO EN CALIENTE (HOT-SWAP REAL) ---
+    // --- DETECTOR DE CAMBIO DE LENTE ---
     cameraSelect.addEventListener('change', () => {
         if (scanActive && html5QrcodeScanner) {
-            logDebug("Cambiando lente físico... Espere liberación de hardware.");
+            logDebug("Intercambiando lente en caliente...");
             scanActive = false;
-            
             html5QrcodeScanner.stop().then(() => {
-                // Delay controlado de 450ms para que el procesador móvil cierre el circuito del lente anterior
-                setTimeout(() => {
-                    ejecutarFlujoEscaneo();
-                }, 450);
+                setTimeout(ejecutarFlujoEscaneo, 300);
             }).catch(() => {
-                setTimeout(() => {
-                    ejecutarFlujoEscaneo();
-                }, 450);
+                setTimeout(ejecutarFlujoEscaneo, 300);
             });
         }
     });
@@ -205,41 +189,39 @@
         } catch (e) { return null; }
     }
 
-    // --- MOTOR DE CONTROL DE VIDEO ---
+    // --- MOTOR DE ESCANEO RE-INGENIERADO ---
     function ejecutarFlujoEscaneo() {
         scanActive = true;
         
-        // Limpieza absoluta de elementos para evitar congelamientos de caché de video
-        const readerContainer = document.getElementById('reader');
-        readerContainer.innerHTML = ""; 
-        
+        // Limpieza completa del nodo del DOM para destruir flujos congelados en segundo plano
+        document.getElementById('reader').innerHTML = ""; 
         html5QrcodeScanner = new Html5Qrcode("reader");
 
-        const selectorValue = cameraSelect.value;
-        let targetCamara;
+        const selectedValue = cameraSelect.value;
+        let targetConstraint;
 
-        // Si el valor es una directiva genérica ("environment" o "user"), la pasamos como objeto estricto
-        if (selectorValue === "environment" || selectorValue === "user") {
-            targetCamara = { facingMode: selectorValue };
+        // AQUÍ ESTÁ LA CORRECCIÓN CRUCIAL:
+        // Construimos restricciones de MediaTrack directas y estrictas para evitar fallbacks del navegador.
+        if (selectedValue === "environment") {
+            targetConstraint = { facingMode: { exact: "environment" } };
+        } else if (selectedValue === "user") {
+            targetConstraint = { facingMode: { exact: "user" } };
         } else {
-            // Si ya es un ID largo de hardware de la lista, lo pasamos como string directo
-            targetCamara = selectorValue;
+            // Forzado de ID por hardware puro usando la propiedad 'exact'
+            targetConstraint = { deviceId: { exact: selectedValue } };
         }
 
+        // Configuración fluida eliminando restricciones de aspecto fijas que hacían saltar la cámara al default
         const config = { 
             fps: 25, 
-            qrbox: (w, h) => { return { width: w * 0.9, height: h * 0.55 }; },
-            formatsToSupport: [ Html5QrcodeSupportedFormats.QR_CODE, Html5QrcodeSupportedFormats.PDF_417 ],
-            videoConstraints: { 
-                width: { ideal: 1280 }, 
-                height: { ideal: 720 } 
-            }
+            qrbox: (w, h) => { return { width: w * 0.9, height: h * 0.60 }; },
+            formatsToSupport: [ Html5QrcodeSupportedFormats.QR_CODE, Html5QrcodeSupportedFormats.PDF_417 ]
         };
 
-        logDebug("Abriendo canal de video...");
+        logDebug("Sincronizando sensor óptico seleccionado...");
 
         html5QrcodeScanner.start(
-            targetCamara, 
+            targetConstraint, 
             config,
             (decodedText, decodedResult) => {
                 if (!scanActive) return;
@@ -266,23 +248,28 @@
                     overlay.style.display = 'flex';
                     btnNuevaLectura.style.display = 'block';
                     btnStop.style.display = 'none';
-                    logDebug(`Lectura correcta: CC ${datos.cedula}`);
+                    logDebug(`Cédula decodificada con éxito.`);
                 } else {
                     scanActive = false;
                     playSound('error');
-                    alert("Código detectado sin estructura de la Registraduría CO.");
+                    alert("Código detectado. Coloque el código de barras de la cédula dentro del recuadro.");
                     prepararSiguienteLectura();
                 }
             },
-            (err) => { /* Escaneo en ráfaga continuo */ }
+            (err) => { /* Captura ráfaga continua */ }
         ).then(() => {
-            // ¡ESTA ES LA CLAVE!: Una vez encendido el video con éxito, los permisos quedan libres.
-            // Inmediatamente leemos los nombres reales de las cámaras y actualizamos el menú desplegable sin alterar la transmisión.
-            setTimeout(() => {
-                actualizarListaHardwareReal();
-            }, 300);
+            logDebug("Lente bloqueado y transmitiendo.");
+            // Si el navegador tenía bloqueadas las etiquetas de hardware, este disparo las desbloquea y enumera
+            setTimeout(enumerarHardwareDisponible, 400);
         }).catch(err => {
-            logDebug(`Fallo crítico al inicializar: ${err}`);
+            logDebug(`Fallo de hardware: Ocupado o incompatible.`);
+            
+            // Si falla por el bloqueo 'exact' (común en computadores de escritorio sin cámara trasera),
+            // hace un fallback controlado e inteligente a modo genérico
+            if (selectedValue === "environment") {
+                logDebug("Reintentando en modo adaptable...");
+                html5QrcodeScanner.start({ facingMode: "environment" }, config, () => {}, () => {});
+            }
         });
     }
 
@@ -298,6 +285,16 @@
         ejecutarFlujoEscaneo();
     }
 
+    function comprobarYRefrescarPermisos() {
+        Html5Qrcode.getCameras().then(() => {
+            enumerarHardwareDisponible();
+        }).catch(() => {});
+    }
+
+    window.addEventListener('DOMContentLoaded', comprobarYRefrescarPermisos);
+    btnStart.addEventListener('click', arrancarEscaner);
+    btnNuevaLectura.addEventListener('click', prepararSiguienteLectura);
+    
     function prepararSiguienteLectura() {
         if (html5QrcodeScanner) {
             html5QrcodeScanner.stop().then(() => {
@@ -308,9 +305,6 @@
         }
     }
 
-    btnStart.addEventListener('click', arrancarEscaner);
-    btnNuevaLectura.addEventListener('click', prepararSiguienteLectura);
-    
     btnStop.addEventListener('click', () => {
         if (html5QrcodeScanner) {
             html5QrcodeScanner.stop().then(() => {
@@ -320,7 +314,7 @@
                 btnStop.style.display = 'none';
                 tablaInfo.style.display = 'none';
                 overlay.style.display = 'none';
-                logDebug("Escáner apagado por el operador.");
+                logDebug("Cámara liberada.");
             });
         }
     });
