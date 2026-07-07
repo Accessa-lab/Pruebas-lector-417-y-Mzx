@@ -3,12 +3,15 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Validador de Cédulas CO - Hard Lock</title>
+    <title>Validador de Cédulas CO - Ciclo Infinito</title>
     <script src="https://unpkg.com/html5-qrcode"></script>
     <style>
         body { font-family: 'Segoe UI', Arial, sans-serif; text-align: center; margin: 0; padding: 15px; background-color: #0f172a; color: #f8fafc; }
         .container { max-width: 500px; margin: 0 auto; background: #1e293b; padding: 20px; border-radius: 16px; box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3); }
         #reader-container { position: relative; width: 100%; border-radius: 12px; overflow: hidden; background: #000; border: 2px solid #3b82f6; margin-top: 10px; }
+        
+        /* Contenedor dinámico que limpiaremos por código */
+        #reader-wrapper { width: 100%; }
         #reader { width: 100%; }
         
         .congelado-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(26, 188, 156, 0.25); display: none; justify-content: center; align-items: center; font-weight: bold; font-size: 20px; color: #2ecc71; text-shadow: 0 2px 4px rgba(0,0,0,0.8); pointer-events: none; }
@@ -35,12 +38,12 @@
 
 <div class="container">
     <h2>Validador de Cédulas CO</h2>
-    <p style="font-size: 13px; color: #94a3b8; margin-top: -10px;">Lector optimizado de códigos de barras de alta densidad</p>
+    <p style="font-size: 13px; color: #94a3b8; margin-top: -10px;">Estable • Multi-conmutación sin bloqueos de hardware</p>
     
     <div class="select-wrapper">
         <label for="video-source">Seleccionar Lente:</label>
         <select id="video-source">
-            <option value="environment" selected>📸 Forzar Cámara Trasera (Principal)</option>
+            <option value="environment" selected>📸 Cámara Trasera Principal</option>
             <option value="user">🤳 Cámara Frontal (Selfie)</option>
         </select>
     </div>
@@ -49,7 +52,9 @@
     <button id="btn-nueva-lectura">🔄 Nueva Lectura</button>
 
     <div id="reader-container">
-        <div id="reader"></div>
+        <div id="reader-wrapper">
+            <div id="reader"></div>
+        </div>
         <div id="overlay" class="congelado-overlay">✓ LECTURA CORRECTA</div>
     </div>
 
@@ -63,11 +68,11 @@
         <tr><th>Género</th><td id="res-genero">-</td></tr>
     </table>
 
-    <div id="debug-box">Consola: Esperando ejecución...</div>
+    <div id="debug-box">Consola: Sistema inicializado.</div>
 </div>
 
 <script>
-    let html5QrcodeScanner;
+    let html5QrcodeScanner = null;
     const btnStart = document.getElementById('btn-start');
     const btnNuevaLectura = document.getElementById('btn-nueva-lectura');
     const btnStop = document.getElementById('btn-stop');
@@ -75,6 +80,7 @@
     const tablaInfo = document.getElementById('tabla-info');
     const debugBox = document.getElementById('debug-box');
     const cameraSelect = document.getElementById('video-source');
+    const readerWrapper = document.getElementById('reader-wrapper');
     
     let scanActive = false;
 
@@ -102,24 +108,33 @@
         }
     }
 
-    // --- LISTAR CÁMARAS DISPONIBLES ---
-    function enumerarHardwareDisponible() {
+    // --- LA SOLUCIÓN MAESTRA: REGENERACIÓN ABSOLUTA DEL DOM ---
+    function recrearNodoLector() {
+        // Al sobreescribir el contenedor padre, borramos cualquier rastro, evento colgado o canvas corrupto de la sesión anterior
+        readerWrapper.innerHTML = '<div id="reader"></div>';
+    }
+
+    // --- ENUMERAR HARDWARE SIN COMANDEAR ---
+    function enumerarHardware() {
         Html5Qrcode.getCameras().then(devices => {
             if (devices && devices.length > 0 && devices[0].label !== "") {
                 const currentValue = cameraSelect.value;
                 cameraSelect.innerHTML = ""; 
 
-                // Mantener los accesos directos por directiva nativa arriba
+                // Mantener las directivas rápidas arriba
                 const optEnv = document.createElement('option');
                 optEnv.value = "environment";
-                optEnv.text = "📸 Forzar Cámara Trasera (Principal)";
+                optEnv.text = "📸 Cámara Trasera Principal";
                 cameraSelect.appendChild(optEnv);
 
                 devices.forEach((device) => {
-                    const option = document.createElement('option');
-                    option.value = device.id;
-                    option.text = device.label || `Lente ID: ${device.id.substring(0,5)}...`;
-                    cameraSelect.appendChild(option);
+                    // Evitar duplicar las opciones genéricas si el dispositivo reporta nombres estándar
+                    if (!device.label.toLowerCase().includes('front') && !device.label.toLowerCase().includes('selfie')) {
+                        const option = document.createElement('option');
+                        option.value = device.id;
+                        option.text = device.label || `Cámara Trasera Alterna`;
+                        cameraSelect.appendChild(option);
+                    }
                 });
 
                 const optUser = document.createElement('option');
@@ -128,20 +143,29 @@
                 cameraSelect.appendChild(optUser);
 
                 cameraSelect.value = currentValue;
-                logDebug("Mapeo de lentes actualizado.");
             }
-        }).catch(() => { /* Silencioso hasta el primer click */ });
+        }).catch(() => {});
     }
 
-    // --- DETECTOR DE CAMBIO DE LENTE ---
+    // --- CONTROLADOR DE INTERCAMBIO DEFINITIVO ---
     cameraSelect.addEventListener('change', () => {
-        if (scanActive && html5QrcodeScanner) {
-            logDebug("Intercambiando lente en caliente...");
+        if (html5QrcodeScanner) {
+            logDebug("Intercambiando hardware... Limpiando memoria.");
             scanActive = false;
+            
+            // Apagamos la instancia actual de forma segura
             html5QrcodeScanner.stop().then(() => {
-                setTimeout(ejecutarFlujoEscaneo, 300);
+                html5QrcodeScanner = null;
+                // Pequeña pausa de 300ms para asegurar la liberación del silicio del teléfono
+                setTimeout(() => {
+                    ejecutarFlujoEscaneo();
+                }, 300);
             }).catch(() => {
-                setTimeout(ejecutarFlujoEscaneo, 300);
+                // Si la librería falla al detenerse, forzamos la purga manual
+                html5QrcodeScanner = null;
+                setTimeout(() => {
+                    ejecutarFlujoEscaneo();
+                }, 300);
             });
         }
     });
@@ -189,40 +213,39 @@
         } catch (e) { return null; }
     }
 
-    // --- MOTOR DE ESCANEO RE-INGENIERADO ---
+    // --- MOTOR DE ARRANQUE INMUNE A CONGELAMIENTO ---
     function ejecutarFlujoEscaneo() {
         scanActive = true;
         
-        // Limpieza completa del nodo del DOM para destruir flujos congelados en segundo plano
-        document.getElementById('reader').innerHTML = ""; 
+        // 1. ANULAR EL PASADO: Destruimos físicamente el div 'reader' y colocamos uno virgen
+        recrearNodoLector();
+        
+        // 2. CREAR INSTANCIA PURA: Vinculada al nuevo nodo limpio
         html5QrcodeScanner = new Html5Qrcode("reader");
 
         const selectedValue = cameraSelect.value;
-        let targetConstraint;
+        let configCamara;
 
-        // AQUÍ ESTÁ LA CORRECCIÓN CRUCIAL:
-        // Construimos restricciones de MediaTrack directas y estrictas para evitar fallbacks del navegador.
+        // Estructura adaptativa para evitar bloqueos del planificador del navegador
         if (selectedValue === "environment") {
-            targetConstraint = { facingMode: { exact: "environment" } };
+            configCamara = { facingMode: "environment" };
         } else if (selectedValue === "user") {
-            targetConstraint = { facingMode: { exact: "user" } };
+            configCamara = { facingMode: "user" };
         } else {
-            // Forzado de ID por hardware puro usando la propiedad 'exact'
-            targetConstraint = { deviceId: { exact: selectedValue } };
+            configCamara = { deviceId: selectedValue };
         }
 
-        // Configuración fluida eliminando restricciones de aspecto fijas que hacían saltar la cámara al default
-        const config = { 
+        const configVisual = { 
             fps: 25, 
             qrbox: (w, h) => { return { width: w * 0.9, height: h * 0.60 }; },
             formatsToSupport: [ Html5QrcodeSupportedFormats.QR_CODE, Html5QrcodeSupportedFormats.PDF_417 ]
         };
 
-        logDebug("Sincronizando sensor óptico seleccionado...");
+        logDebug("Conectando con el sensor...");
 
         html5QrcodeScanner.start(
-            targetConstraint, 
-            config,
+            configCamara, 
+            configVisual,
             (decodedText, decodedResult) => {
                 if (!scanActive) return;
 
@@ -235,6 +258,8 @@
                 if (datos) {
                     scanActive = false;
                     playSound('success');
+                    
+                    // Pausar el video visualmente de forma inmediata
                     const videoEl = document.querySelector('#reader video');
                     if (videoEl) videoEl.pause();
 
@@ -248,28 +273,22 @@
                     overlay.style.display = 'flex';
                     btnNuevaLectura.style.display = 'block';
                     btnStop.style.display = 'none';
-                    logDebug(`Cédula decodificada con éxito.`);
+                    logDebug(`CC ${datos.cedula} procesada.`);
                 } else {
                     scanActive = false;
                     playSound('error');
-                    alert("Código detectado. Coloque el código de barras de la cédula dentro del recuadro.");
+                    alert("Código detectado pero no contiene datos válidos de una cédula colombiana.");
                     prepararSiguienteLectura();
                 }
             },
-            (err) => { /* Captura ráfaga continua */ }
+            (err) => { /* Flujo continuo pasivo */ }
         ).then(() => {
-            logDebug("Lente bloqueado y transmitiendo.");
-            // Si el navegador tenía bloqueadas las etiquetas de hardware, este disparo las desbloquea y enumera
-            setTimeout(enumerarHardwareDisponible, 400);
+            logDebug("Transmisión activa estable.");
+            // Una vez encendida la cámara, los permisos del navegador están desbloqueados. 
+            // Aprovechamos para mapear los nombres de lentes físicos si existen.
+            setTimeout(enumerarHardware, 350);
         }).catch(err => {
-            logDebug(`Fallo de hardware: Ocupado o incompatible.`);
-            
-            // Si falla por el bloqueo 'exact' (común en computadores de escritorio sin cámara trasera),
-            // hace un fallback controlado e inteligente a modo genérico
-            if (selectedValue === "environment") {
-                logDebug("Reintentando en modo adaptable...");
-                html5QrcodeScanner.start({ facingMode: "environment" }, config, () => {}, () => {});
-            }
+            logDebug(`Error de inicialización: ${err}`);
         });
     }
 
@@ -285,36 +304,46 @@
         ejecutarFlujoEscaneo();
     }
 
-    function comprobarYRefrescarPermisos() {
-        Html5Qrcode.getCameras().then(() => {
-            enumerarHardwareDisponible();
-        }).catch(() => {});
-    }
-
-    window.addEventListener('DOMContentLoaded', comprobarYRefrescarPermisos);
-    btnStart.addEventListener('click', arrancarEscaner);
-    btnNuevaLectura.addEventListener('click', prepararSiguienteLectura);
-    
     function prepararSiguienteLectura() {
         if (html5QrcodeScanner) {
             html5QrcodeScanner.stop().then(() => {
+                html5QrcodeScanner = null;
                 setTimeout(arrancarEscaner, 200);
-            }).catch(() => arrancarEscaner());
+            }).catch(() => {
+                html5QrcodeScanner = null;
+                arrancarEscaner();
+            });
         } else {
             arrancarEscaner();
         }
     }
 
+    // Inicialización suave al cargar la página
+    window.addEventListener('DOMContentLoaded', () => {
+        // Reiniciar el selector a la cámara trasera por defecto siempre que la página se refresque
+        cameraSelect.value = "environment";
+        Html5Qrcode.getCameras().then(() => enumerarHardware()).catch(() => {});
+    });
+
+    btnStart.addEventListener('click', arrancarEscaner);
+    btnNuevaLectura.addEventListener('click', prepararSiguienteLectura);
+    
     btnStop.addEventListener('click', () => {
         if (html5QrcodeScanner) {
             html5QrcodeScanner.stop().then(() => {
+                html5QrcodeScanner = null;
                 scanActive = false;
                 btnStart.style.display = 'block';
                 btnNuevaLectura.style.display = 'none';
                 btnStop.style.display = 'none';
                 tablaInfo.style.display = 'none';
                 overlay.style.display = 'none';
-                logDebug("Cámara liberada.");
+                logDebug("Cámara apagada y liberada.");
+            }).catch(() => {
+                html5QrcodeScanner = null;
+                scanActive = false;
+                btnStart.style.display = 'block';
+                btnStop.style.display = 'none';
             });
         }
     });
